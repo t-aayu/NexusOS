@@ -10,15 +10,19 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -62,16 +66,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nexus.prm.data.ContactGroup
 import com.nexus.prm.data.ContactShareHelper
+import com.nexus.prm.data.DirectorySearch
 import com.nexus.prm.data.PersonCategory
 import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.ui.components.ProfileAvatar
+import com.nexus.prm.ui.theme.NexusFrostedStyle
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -97,10 +105,7 @@ fun PeopleScreen(
     containerColor = MaterialTheme.colorScheme.background,
     topBar = {
       TopAppBar(
-        colors = TopAppBarDefaults.topAppBarColors(
-          containerColor = MaterialTheme.colorScheme.background,
-          titleContentColor = MaterialTheme.colorScheme.onBackground,
-        ),
+        colors = NexusFrostedStyle.topAppBarColors(),
         title = {
           Column {
             Text("People", fontWeight = FontWeight.Bold)
@@ -189,30 +194,70 @@ fun PeopleScreen(
         .fillMaxSize()
         .padding(innerPadding),
     ) {
-      OutlinedTextField(
-        value = uiState.filter.query,
-        onValueChange = viewModel::onQueryChange,
+      androidx.compose.material3.Surface(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(horizontal = 16.dp, vertical = 8.dp),
+          .padding(horizontal = 16.dp, vertical = 6.dp)
+          .defaultMinSize(minHeight = 48.dp),
         shape = RoundedCornerShape(16.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-          focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-          unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-          focusedBorderColor = MaterialTheme.colorScheme.primary,
-          unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-        ),
-        placeholder = { Text("Search name, phone, email, role, location, group") },
-        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-        trailingIcon = {
+        color = NexusFrostedStyle.surfaceColor(MaterialTheme.colorScheme),
+        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+        tonalElevation = NexusFrostedStyle.TonalElevation,
+        shadowElevation = NexusFrostedStyle.ShadowElevation,
+      ) {
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Icon(
+            imageVector = Icons.Filled.Search,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
+          )
+          Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.CenterStart,
+          ) {
+            if (uiState.filter.query.isEmpty()) {
+              Text(
+                text = "Search people",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+              )
+            }
+            BasicTextField(
+              value = uiState.filter.query,
+              onValueChange = viewModel::onQueryChange,
+              singleLine = true,
+              textStyle = MaterialTheme.typography.bodyMedium.copy(
+                color = MaterialTheme.colorScheme.onSurface,
+              ),
+              cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+              keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
           if (uiState.filter.query.isNotEmpty()) {
-            IconButton(onClick = { viewModel.onQueryChange("") }) {
-              Icon(Icons.Filled.Close, contentDescription = "Clear search")
+            IconButton(
+              onClick = { viewModel.onQueryChange("") },
+              modifier = Modifier.size(32.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "Clear search",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+              )
             }
           }
-        },
-        singleLine = true,
-      )
+        }
+      }
 
       FilterBar(
         filter = uiState.filter,
@@ -233,6 +278,15 @@ fun PeopleScreen(
           onClearFilters = viewModel::clearFilters,
         )
       } else {
+        val groupNamesByProfileId = remember(uiState.reusableGroups) {
+          buildMap<String, MutableList<String>> {
+            for (group in uiState.reusableGroups) {
+              for (memberId in group.memberIds) {
+                getOrPut(memberId) { mutableListOf() }.add(group.name)
+              }
+            }
+          }
+        }
         LazyColumn(
           modifier = Modifier.fillMaxSize(),
           contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
@@ -240,8 +294,16 @@ fun PeopleScreen(
         ) {
           items(uiState.visibleProfiles, key = { it.id }) { profile ->
             val context = LocalContext.current
+            val matchReason = remember(profile, uiState.filter.query, groupNamesByProfileId) {
+              DirectorySearch.explainMatch(
+                profile = profile,
+                query = uiState.filter.query,
+                groupNames = groupNamesByProfileId[profile.id].orEmpty(),
+              )
+            }
             PersonListCard(
               profile = profile,
+              matchReason = matchReason,
               loadPhotoBytes = viewModel::loadPhotoBytes,
               onClick = { onPersonClick(profile.id) },
               onEdit = { onEditClick(profile.id) },
@@ -479,6 +541,7 @@ internal fun personCardSubtitle(profile: PersonProfile): String {
 @Composable
 private fun PersonListCard(
   profile: PersonProfile,
+  matchReason: String?,
   loadPhotoBytes: suspend (String) -> ByteArray?,
   onClick: () -> Unit,
   onEdit: () -> Unit,
@@ -497,8 +560,9 @@ private fun PersonListCard(
           onLongClick = { menuExpanded = true },
         ),
       shape = RoundedCornerShape(16.dp),
-      border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-      colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+      border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+      colors = NexusFrostedStyle.cardColors(),
+      elevation = NexusFrostedStyle.cardElevation(),
     ) {
     Row(
       modifier = Modifier
@@ -547,6 +611,16 @@ private fun PersonListCard(
             text = profile.tags.joinToString(" \u00B7 ") { "#$it" },
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.secondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+          )
+        }
+        if (!matchReason.isNullOrBlank()) {
+          Text(
+            text = matchReason,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.primary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )

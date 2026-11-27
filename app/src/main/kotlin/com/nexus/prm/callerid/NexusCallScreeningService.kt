@@ -4,15 +4,10 @@ import android.os.Build
 import android.telecom.Call
 import android.telecom.CallScreeningService
 import com.nexus.prm.NexusApp
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class NexusCallScreeningService : CallScreeningService() {
-
-  private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
   override fun onScreenCall(callDetails: Call.Details) {
     // Respond immediately so directory lookup or card rendering never delays ringing.
@@ -32,17 +27,15 @@ class NexusCallScreeningService : CallScreeningService() {
     val incomingNumber = callDetails.handle?.schemeSpecificPart?.trim().orEmpty()
     if (incomingNumber.isEmpty()) return
 
-    serviceScope.launch {
+    val app = applicationContext as? NexusApp ?: return
+    // Use application-scoped work on IO so unbinding/destroying CallScreeningService
+    // right after respondToCall never cancels cold-start directory load or overlay display.
+    app.appScope.launch(Dispatchers.IO) {
       runCatching {
-        val profiles = (applicationContext as NexusApp).directoryRepository.profiles.value
+        val profiles = app.directoryRepository.profiles.value
         val match = CallerIdMatcher.findUnambiguousMatch(incomingNumber, profiles) ?: return@runCatching
-        CallerIdOverlayManager.showCallerCard(applicationContext, match)
+        CallerIdOverlayManager.showCallerCard(app, match)
       }
     }
-  }
-
-  override fun onDestroy() {
-    serviceScope.cancel()
-    super.onDestroy()
   }
 }

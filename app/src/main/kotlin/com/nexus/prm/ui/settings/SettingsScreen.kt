@@ -84,6 +84,7 @@ import com.nexus.prm.callerid.CallerIdPreferences
 import com.nexus.prm.callerid.CallerIdStatus
 import com.nexus.prm.data.AutoBackupManager
 import com.nexus.prm.data.BackupDestinationStatus
+import com.nexus.prm.data.BackupLimits
 import com.nexus.prm.data.BackupPreview
 import com.nexus.prm.data.CsvExporter
 import com.nexus.prm.data.DirectoryRepository
@@ -93,6 +94,7 @@ import com.nexus.prm.data.RestoreMerger
 import com.nexus.prm.data.RestoreMode
 import com.nexus.prm.data.SafBackupDestination
 import com.nexus.prm.ui.theme.AccentChoice
+import com.nexus.prm.ui.theme.NexusFrostedStyle
 import com.nexus.prm.ui.theme.ThemeMode
 import com.nexus.prm.ui.theme.ThemePreferences
 import com.nexus.prm.ui.theme.isEffectiveDark
@@ -169,8 +171,9 @@ fun SettingsScreen(
             out.write(encrypted)
             out.flush()
           } ?: error("Could not open destination file")
-          context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: error("Could not reopen saved backup for verification")
+          context.contentResolver.openInputStream(uri)?.use {
+            BackupLimits.readEncryptedBackupBounded(it)
+          } ?: error("Could not reopen saved backup for verification")
         }
         repository.inspectBackup(readBack, password)
       }.onSuccess { preview ->
@@ -195,8 +198,9 @@ fun SettingsScreen(
     scope.launch {
       runCatching {
         withContext(Dispatchers.IO) {
-          context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: error("Could not read selected file")
+          context.contentResolver.openInputStream(uri)?.use {
+            BackupLimits.readEncryptedBackupBounded(it)
+          } ?: error("Could not read selected file")
         }
       }.onSuccess { bytes ->
         pendingRestoreBytes = bytes
@@ -339,10 +343,7 @@ fun SettingsScreen(
     containerColor = MaterialTheme.colorScheme.background,
     topBar = {
       TopAppBar(
-        colors = TopAppBarDefaults.topAppBarColors(
-          containerColor = MaterialTheme.colorScheme.background,
-          titleContentColor = MaterialTheme.colorScheme.onBackground,
-        ),
+        colors = NexusFrostedStyle.topAppBarColors(),
         title = { Text("Settings", fontWeight = FontWeight.SemiBold) },
         navigationIcon = {
           IconButton(onClick = onBack) {
@@ -397,8 +398,8 @@ fun SettingsScreen(
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+        colors = NexusFrostedStyle.cardColors(),
       ) {
         Column(
           modifier = Modifier
@@ -520,8 +521,8 @@ fun SettingsScreen(
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+        colors = NexusFrostedStyle.cardColors(),
       ) {
         Column(
           modifier = Modifier
@@ -551,8 +552,8 @@ fun SettingsScreen(
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+        colors = NexusFrostedStyle.cardColors(),
       ) {
         Column(
           modifier = Modifier
@@ -608,8 +609,8 @@ fun SettingsScreen(
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+        colors = NexusFrostedStyle.cardColors(),
       ) {
         Column(
           modifier = Modifier
@@ -795,8 +796,8 @@ fun SettingsScreen(
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+        colors = NexusFrostedStyle.cardColors(),
       ) {
         Column(
           modifier = Modifier
@@ -923,8 +924,8 @@ fun SettingsScreen(
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+        colors = NexusFrostedStyle.cardColors(),
       ) {
         Column(
           modifier = Modifier

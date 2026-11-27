@@ -72,6 +72,126 @@ object DirectorySearch {
 
   private val WHITESPACE_REGEX = Regex("\\s+")
 
+  fun explainMatch(
+    profile: PersonProfile,
+    query: String,
+    groupNames: List<String> = emptyList(),
+  ): String? {
+    val trimmed = query.trim()
+    if (trimmed.isEmpty()) return null
+
+    if (profile.name.contains(trimmed, ignoreCase = true)) return null
+    val words = trimmed.split(WHITESPACE_REGEX).filter { it.isNotEmpty() }
+    if (words.size > 1 && words.all { profile.name.contains(it, ignoreCase = true) }) {
+      return null
+    }
+
+    val tokens = if (words.size > 1) listOf(trimmed) + words else listOf(trimmed)
+    val isPhoneQuery = isPhoneLikeQuery(trimmed)
+    val queryDigits = if (isPhoneQuery) normalizePhoneDigits(trimmed) else ""
+
+    for (token in tokens) {
+      // 1. Past postings (location, designation, organisation)
+      for (posting in profile.postings) {
+        if (posting.isCurrent) continue
+        val matchedValue = firstMatchingNonBlank(
+          token,
+          posting.location,
+          posting.designation,
+          posting.organisation,
+        )
+        if (matchedValue != null) {
+          return "Past posting \u00B7 ${matchedValue.take(28)}"
+        }
+      }
+
+      // 2. Introductions
+      for (intro in profile.introductions) {
+        val introName = intro.introducerName.trim()
+        if (introName.isNotEmpty() && introName.contains(token, ignoreCase = true)) {
+          return "Introduced by ${introName.take(28)}"
+        }
+      }
+
+      // 3. Phone numbers (never expose full phone number in the hint)
+      val matchedPhone = profile.resolvedPhones().firstOrNull { entry ->
+        entry.value.contains(token, ignoreCase = true) ||
+          (isPhoneQuery && queryDigits.isNotEmpty() && normalizePhoneDigits(entry.value).contains(queryDigits))
+      }
+      if (matchedPhone != null) {
+        return "Match \u00B7 ${matchedPhone.label} number"
+      }
+
+      // 4. Emails
+      val matchedEmail = profile.resolvedEmails().firstOrNull { entry ->
+        entry.value.contains(token, ignoreCase = true)
+      }
+      if (matchedEmail != null) {
+        return "Match \u00B7 ${matchedEmail.label} email"
+      }
+
+      // 5. Current posting
+      for (posting in profile.postings) {
+        if (!posting.isCurrent) continue
+        val matchedValue = firstMatchingNonBlank(
+          token,
+          posting.location,
+          posting.designation,
+          posting.organisation,
+        )
+        if (matchedValue != null) {
+          return "Current posting \u00B7 ${matchedValue.take(28)}"
+        }
+      }
+
+      // 6. Groups
+      val matchedGroup = groupNames.firstOrNull { it.contains(token, ignoreCase = true) }
+      if (matchedGroup != null) {
+        return "Group \u00B7 ${matchedGroup.trim().take(28)}"
+      }
+
+      // 7. Tags
+      val matchedTag = profile.tags.firstOrNull { it.contains(token, ignoreCase = true) }
+      if (matchedTag != null) {
+        return "Tag \u00B7 #${matchedTag.trim().take(24)}"
+      }
+
+      // 8. Structured directory metadata
+      val metaCandidates = listOf(
+        "Service" to profile.service,
+        "Cadre" to profile.cadre,
+        "Batch" to profile.serviceBatch,
+        "FC batch" to profile.foundationCourseBatch,
+        "Training group" to profile.trainingGroup,
+        "Category" to profile.categoryLabel().orEmpty(),
+        "Role" to profile.designation,
+        "Org" to profile.organisation,
+      )
+      for ((label, raw) in metaCandidates) {
+        val cleaned = raw.trim()
+        if (cleaned.isNotEmpty() && cleaned.contains(token, ignoreCase = true)) {
+          return "$label \u00B7 ${cleaned.take(28)}"
+        }
+      }
+
+      // 9. Private notes (never expose note contents)
+      if (profile.whereWeMet.contains(token, ignoreCase = true)) {
+        return "Match \u00B7 Where we met"
+      }
+      if (profile.otherDetails.contains(token, ignoreCase = true)) {
+        return "Match \u00B7 Other details"
+      }
+    }
+
+    return null
+  }
+
+  private fun firstMatchingNonBlank(token: String, vararg values: String): String? =
+    values.firstOrNull { raw ->
+      val cleaned = raw.trim()
+      cleaned.isNotEmpty() && cleaned.contains(token, ignoreCase = true)
+    }?.trim()
+
   fun filterAndSort(
     profiles: List<PersonProfile>,
     query: String,

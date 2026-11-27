@@ -2,9 +2,18 @@ package com.nexus.prm.ui.theme
 
 import android.content.Context
 import android.os.Build
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.CardColors
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CardElevation
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.TextFieldColors
+import androidx.compose.material3.TopAppBarColors
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -12,6 +21,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 
 private data class AccentPalette(
   val primary: Color,
@@ -171,4 +181,55 @@ fun NexusTheme(
     typography = Typography,
     content = content,
   )
+}
+
+object NexusFrostedStyle {
+  val TonalElevation = 2.dp
+  val ShadowElevation = 2.dp
+
+  fun surfaceColor(colorScheme: ColorScheme): Color =
+    colorScheme.surfaceContainerLow.copy(alpha = 0.90f)
+
+  fun toolbarColor(colorScheme: ColorScheme): Color =
+    colorScheme.surfaceContainerLow.copy(alpha = 0.94f)
+
+  fun borderColor(colorScheme: ColorScheme): Color =
+    colorScheme.outlineVariant.copy(alpha = 0.72f)
+
+  fun borderStroke(colorScheme: ColorScheme): BorderStroke =
+    BorderStroke(1.dp, borderColor(colorScheme))
+
+  @Composable
+  fun cardColors(colorScheme: ColorScheme = MaterialTheme.colorScheme): CardColors =
+    CardDefaults.cardColors(
+      containerColor = surfaceColor(colorScheme),
+      contentColor = colorScheme.onSurface,
+    )
+
+  @Composable
+  fun cardElevation(): CardElevation =
+    CardDefaults.cardElevation(defaultElevation = ShadowElevation)
+
+  @OptIn(ExperimentalMaterial3Api::class)
+  @Composable
+  fun topAppBarColors(colorScheme: ColorScheme = MaterialTheme.colorScheme): TopAppBarColors =
+    TopAppBarDefaults.topAppBarColors(
+      containerColor = toolbarColor(colorScheme),
+      scrolledContainerColor = toolbarColor(colorScheme),
+      titleContentColor = colorScheme.onSurface,
+      navigationIconContentColor = colorScheme.onSurface,
+      actionIconContentColor = colorScheme.onSurfaceVariant,
+    )
+
+  @Composable
+  fun textFieldColors(colorScheme: ColorScheme = MaterialTheme.colorScheme): TextFieldColors =
+    OutlinedTextFieldDefaults.colors(
+      focusedContainerColor = surfaceColor(colorScheme),
+      unfocusedContainerColor = surfaceColor(colorScheme),
+      disabledContainerColor = surfaceColor(colorScheme).copy(alpha = 0.6f),
+      focusedBorderColor = colorScheme.primary,
+      unfocusedBorderColor = borderColor(colorScheme),
+      focusedTextColor = colorScheme.onSurface,
+      unfocusedTextColor = colorScheme.onSurface,
+    )
 }

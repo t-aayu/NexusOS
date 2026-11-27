@@ -56,6 +56,7 @@ import com.nexus.prm.data.ContactShareHelper
 import com.nexus.prm.data.DirectoryRepository
 import com.nexus.prm.data.OwnerCard
 import com.nexus.prm.data.OwnerCardVCard
+import com.nexus.prm.ui.theme.NexusFrostedStyle
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -90,10 +91,7 @@ fun OwnerCardScreen(
     containerColor = MaterialTheme.colorScheme.background,
     topBar = {
       TopAppBar(
-        colors = TopAppBarDefaults.topAppBarColors(
-          containerColor = MaterialTheme.colorScheme.background,
-          titleContentColor = MaterialTheme.colorScheme.onBackground,
-        ),
+        colors = NexusFrostedStyle.topAppBarColors(),
         title = { Text("My contact card", fontWeight = FontWeight.SemiBold) },
         navigationIcon = {
           IconButton(onClick = onBack) {
@@ -210,8 +208,9 @@ fun OwnerCardScreen(
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+        colors = NexusFrostedStyle.cardColors(),
+        elevation = NexusFrostedStyle.cardElevation(),
       ) {
         Column(
           modifier = Modifier

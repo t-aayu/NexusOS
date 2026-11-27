@@ -155,8 +155,9 @@ class SafBackupDestination(
         out.flush()
       } ?: error("Could not write to staging backup file")
 
-      context.contentResolver.openInputStream(created.uri)?.use { it.readBytes() }
-        ?: error("Could not reopen staging backup file for verification")
+      context.contentResolver.openInputStream(created.uri)?.use {
+        BackupLimits.readEncryptedBackupBounded(it)
+      } ?: error("Could not reopen staging backup file for verification")
     } catch (t: Throwable) {
       stagedDocs.remove(stagingName)
       runCatching { created.delete() }

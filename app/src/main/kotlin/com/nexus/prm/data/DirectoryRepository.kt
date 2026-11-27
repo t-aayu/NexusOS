@@ -233,7 +233,14 @@ class LocalDirectoryRepository(
         _customCategories.value + listOfNotNull(normalized.customCategory),
       )
 
-      persistSnapshot(updatedList, _groups.value, _ownerCard.value, updatedCategories)
+      try {
+        persistSnapshot(updatedList, _groups.value, _ownerCard.value, updatedCategories)
+      } catch (t: Throwable) {
+        if (pendingPhotoBytes != null && newPhotoFileName != null) {
+          deletePhotoFile(newPhotoFileName)
+        }
+        throw t
+      }
       _profiles.value = updatedList
       _customCategories.value = updatedCategories
 
@@ -561,24 +568,45 @@ class LocalDirectoryRepository(
 
   override suspend fun inspectBackup(encryptedBytes: ByteArray, password: String): BackupPreview =
     withContext(ioDispatcher) {
+      require(encryptedBytes.size <= BackupLimits.MAX_ENCRYPTED_BACKUP_BYTES) {
+        "Backup file exceeds the maximum allowed size (${BackupLimits.MAX_ENCRYPTED_BACKUP_BYTES / (1024 * 1024)} MB)."
+      }
       val zipBytes = BackupCrypto.decrypt(encryptedBytes, password)
       var manifestJson: String? = null
       val photos = mutableMapOf<String, ByteArray>()
+      var entryCount = 0
+      var totalExpandedBytes = 0
 
       ZipInputStream(ByteArrayInputStream(zipBytes)).use { zip ->
         var entry = zip.nextEntry
         while (entry != null) {
+          entryCount++
+          require(entryCount <= BackupLimits.MAX_ENTRY_COUNT) {
+            "Backup contains too many entries (limit ${BackupLimits.MAX_ENTRY_COUNT})."
+          }
           if (!entry.isDirectory) {
+            val remainingTotal = (BackupLimits.MAX_TOTAL_EXPANDED_BYTES - totalExpandedBytes).coerceAtLeast(0)
             when {
               entry.name == MANIFEST_ENTRY -> {
-                manifestJson = zip.readBytes().decodeToString()
+                val entryLimit = minOf(BackupLimits.MAX_MANIFEST_ENTRY_BYTES, remainingTotal)
+                val entryBytes = BackupLimits.readBounded(zip, entryLimit, "Backup manifest")
+                totalExpandedBytes += entryBytes.size
+                manifestJson = entryBytes.decodeToString()
               }
               entry.name.startsWith(PHOTOS_PREFIX) -> {
                 val photoName = entry.name.removePrefix(PHOTOS_PREFIX)
                 require(!photoName.contains('/') && !photoName.contains('\\') && photoName.isNotBlank()) {
                   "Invalid photo entry in backup"
                 }
-                photos[photoName] = zip.readBytes()
+                val entryLimit = minOf(BackupLimits.MAX_PHOTO_ENTRY_BYTES, remainingTotal)
+                val entryBytes = BackupLimits.readBounded(zip, entryLimit, "Backup photo '$photoName'")
+                totalExpandedBytes += entryBytes.size
+                photos[photoName] = entryBytes
+              }
+              else -> {
+                val entryLimit = minOf(BackupLimits.MAX_PHOTO_ENTRY_BYTES, remainingTotal)
+                val skipped = BackupLimits.readBounded(zip, entryLimit, "Backup entry '${entry.name}'")
+                totalExpandedBytes += skipped.size
               }
             }
           }

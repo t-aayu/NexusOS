@@ -76,6 +76,7 @@ import com.nexus.prm.ui.components.DatePickerField
 import com.nexus.prm.ui.components.ProfileAvatar
 import com.nexus.prm.ui.components.SearchableContactPickerDialog
 import com.nexus.prm.ui.components.WheelDatePickerDialog
+import com.nexus.prm.ui.theme.NexusFrostedStyle
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -136,10 +137,7 @@ fun PersonDetailScreen(
     containerColor = MaterialTheme.colorScheme.background,
     topBar = {
       TopAppBar(
-        colors = TopAppBarDefaults.topAppBarColors(
-          containerColor = MaterialTheme.colorScheme.background,
-          titleContentColor = MaterialTheme.colorScheme.onBackground,
-        ),
+        colors = NexusFrostedStyle.topAppBarColors(),
         title = { Text("Profile", fontWeight = FontWeight.SemiBold) },
         navigationIcon = {
           IconButton(onClick = onBack) {
@@ -356,8 +354,8 @@ fun PersonDetailScreen(
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+        colors = NexusFrostedStyle.cardColors(),
       ) {
         Column(
           modifier = Modifier
@@ -457,8 +455,8 @@ fun PersonDetailScreen(
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+        colors = NexusFrostedStyle.cardColors(),
       ) {
         Column(
           modifier = Modifier
@@ -584,8 +582,8 @@ fun PersonDetailScreen(
         Card(
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(16.dp),
-          border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+          border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+          colors = NexusFrostedStyle.cardColors(),
         ) {
           Column(
             modifier = Modifier
@@ -623,8 +621,8 @@ fun PersonDetailScreen(
         Card(
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(16.dp),
-          border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+          border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+          colors = NexusFrostedStyle.cardColors(),
         ) {
           Column(
             modifier = Modifier
@@ -1012,8 +1010,8 @@ private fun DetailSectionCard(
   Card(
     modifier = Modifier.fillMaxWidth(),
     shape = RoundedCornerShape(16.dp),
-    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
+    colors = NexusFrostedStyle.cardColors(),
   ) {
     Column(
       modifier = Modifier

@@ -56,4 +56,13 @@
         android:maxLines="3"
         android:textColor="#C4D2E3"
         android:textSize="13sp" />
+
+    <LinearLayout
+        android:id="@+id/caller_id_tags_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone" />
 </LinearLayout>

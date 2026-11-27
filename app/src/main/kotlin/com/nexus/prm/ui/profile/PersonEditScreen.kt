@@ -42,6 +42,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -94,6 +96,7 @@ import com.nexus.prm.data.PersonCategory
 import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.data.PhotoUtils
 import com.nexus.prm.ui.components.ProfileAvatar
+import com.nexus.prm.ui.theme.NexusFrostedStyle
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -113,6 +116,7 @@ data class ContactRowDraft(
 @Serializable
 data class PersonEditDraft(
   val sessionId: String,
+  val pendingNewId: String = UUID.randomUUID().toString(),
   val profileId: String? = null,
   val isInitialized: Boolean = false,
   val loadedExisting: PersonProfile? = null,
@@ -204,6 +208,7 @@ data class PersonEditDraft(
 
     fun initialFor(profileId: String?): PersonEditDraft = PersonEditDraft(
       sessionId = UUID.randomUUID().toString(),
+      pendingNewId = UUID.randomUUID().toString(),
       profileId = profileId,
       isInitialized = profileId == null,
     )
@@ -273,8 +278,11 @@ fun PersonEditScreen(
   }
 
   var nameError by remember { mutableStateOf<String?>(null) }
+  var saveError by remember { mutableStateOf<String?>(null) }
+  var saveStatusMessage by remember { mutableStateOf<String?>(null) }
   var isSaving by remember { mutableStateOf(false) }
   var pendingDuplicate by remember { mutableStateOf<DuplicateMatch?>(null) }
+  var pendingAddAnother by remember { mutableStateOf(false) }
 
   fun cancelAndCleanup() {
     DraftPhotoStorage.deleteTempPhoto(draft.pendingPhotoTempPath)
@@ -315,73 +323,93 @@ fun PersonEditScreen(
     }
   }
 
-  fun commitSave() {
+  fun commitSave(addAnother: Boolean) {
     val trimmedName = draft.name.trim()
     if (trimmedName.isEmpty() || isSaving) return
     isSaving = true
+    saveError = null
+    saveStatusMessage = null
 
     scope.launch {
-      val now = System.currentTimeMillis()
-      val base = draft.loadedExisting
-      val tempPath = draft.pendingPhotoTempPath
-      val pendingBytes = withContext(Dispatchers.IO) {
-        DraftPhotoStorage.readTempPhoto(tempPath)
+      try {
+        val now = System.currentTimeMillis()
+        val base = draft.loadedExisting
+        val tempPath = draft.pendingPhotoTempPath
+        val pendingBytes = withContext(Dispatchers.IO) {
+          DraftPhotoStorage.readTempPhoto(tempPath)
+        }
+        val matchedSelectedLabel = draft.categoryQuery.trim().takeIf { it.isNotEmpty() }?.let { typed ->
+          allCategoryOptions.firstOrNull { it.equals(typed, ignoreCase = true) }
+        }
+        val resolvedBuiltIn = matchedSelectedLabel?.let { PersonCategory.fromLabel(it) } ?: draft.category
+        val resolvedCustom = when {
+          resolvedBuiltIn != null -> null
+          matchedSelectedLabel != null -> matchedSelectedLabel
+          else -> draft.customCategory
+        }
+        val normalizedPhones = PersonProfile.normalizeContactList(
+          raw = draft.phoneRows.map { LabeledContactValue(it.value, it.label, it.isPrimary) },
+          normalizer = DuplicateMatcher::normalizePhone,
+        )
+        val normalizedEmails = PersonProfile.normalizeContactList(
+          raw = draft.emailRows.map { LabeledContactValue(it.value, it.label, it.isPrimary) },
+          normalizer = DuplicateMatcher::normalizeEmail,
+        )
+        val profile = PersonProfile(
+          id = base?.id ?: draft.profileId ?: draft.pendingNewId,
+          name = trimmedName,
+          phone = normalizedPhones.firstOrNull { it.isPrimary }?.value.orEmpty(),
+          phones = normalizedPhones,
+          category = resolvedBuiltIn,
+          customCategory = resolvedCustom,
+          whereWeMet = draft.whereWeMet,
+          email = normalizedEmails.firstOrNull { it.isPrimary }?.value.orEmpty(),
+          emails = normalizedEmails,
+          organisation = draft.organisation,
+          designation = draft.designation,
+          service = draft.service,
+          cadre = draft.cadre,
+          serviceBatch = draft.serviceBatch,
+          foundationCourseBatch = draft.foundationCourseBatch,
+          trainingGroup = draft.trainingGroup,
+          otherDetails = draft.otherDetails,
+          tags = draft.tags,
+          photoFileName = if (draft.removePhoto) null else draft.existingPhotoFileName,
+          isFavourite = base?.isFavourite ?: false,
+          createdAtEpochMs = base?.createdAtEpochMs ?: now,
+          updatedAtEpochMs = now,
+        )
+        val saved = repository.saveProfile(
+          profile = profile,
+          pendingPhotoBytes = pendingBytes,
+          removePhoto = draft.removePhoto,
+        )
+        withContext(Dispatchers.IO) {
+          DraftPhotoStorage.deleteTempPhoto(tempPath)
+        }
+        if (addAnother) {
+          draft = PersonEditDraft.initialFor(null)
+          pendingPhotoBytes = null
+          nameError = null
+          saveError = null
+          pendingDuplicate = null
+          pendingAddAnother = false
+          saveStatusMessage = "Saved ${saved.name}. Ready for next contact."
+          nameFocusRequester.requestFocus()
+          keyboardController?.show()
+        } else {
+          onSaved(saved.id)
+        }
+      } catch (t: Throwable) {
+        saveError = t.message?.takeIf { it.isNotBlank() }
+          ?: "Could not save contact. Your changes are still here—please try again."
+      } finally {
+        isSaving = false
       }
-      val matchedSelectedLabel = draft.categoryQuery.trim().takeIf { it.isNotEmpty() }?.let { typed ->
-        allCategoryOptions.firstOrNull { it.equals(typed, ignoreCase = true) }
-      }
-      val resolvedBuiltIn = matchedSelectedLabel?.let { PersonCategory.fromLabel(it) } ?: draft.category
-      val resolvedCustom = when {
-        resolvedBuiltIn != null -> null
-        matchedSelectedLabel != null -> matchedSelectedLabel
-        else -> draft.customCategory
-      }
-      val normalizedPhones = PersonProfile.normalizeContactList(
-        raw = draft.phoneRows.map { LabeledContactValue(it.value, it.label, it.isPrimary) },
-        normalizer = DuplicateMatcher::normalizePhone,
-      )
-      val normalizedEmails = PersonProfile.normalizeContactList(
-        raw = draft.emailRows.map { LabeledContactValue(it.value, it.label, it.isPrimary) },
-        normalizer = DuplicateMatcher::normalizeEmail,
-      )
-      val profile = PersonProfile(
-        id = base?.id ?: UUID.randomUUID().toString(),
-        name = trimmedName,
-        phone = normalizedPhones.firstOrNull { it.isPrimary }?.value.orEmpty(),
-        phones = normalizedPhones,
-        category = resolvedBuiltIn,
-        customCategory = resolvedCustom,
-        whereWeMet = draft.whereWeMet,
-        email = normalizedEmails.firstOrNull { it.isPrimary }?.value.orEmpty(),
-        emails = normalizedEmails,
-        organisation = draft.organisation,
-        designation = draft.designation,
-        service = draft.service,
-        cadre = draft.cadre,
-        serviceBatch = draft.serviceBatch,
-        foundationCourseBatch = draft.foundationCourseBatch,
-        trainingGroup = draft.trainingGroup,
-        otherDetails = draft.otherDetails,
-        tags = draft.tags,
-        photoFileName = if (draft.removePhoto) null else draft.existingPhotoFileName,
-        isFavourite = base?.isFavourite ?: false,
-        createdAtEpochMs = base?.createdAtEpochMs ?: now,
-        updatedAtEpochMs = now,
-      )
-      val saved = repository.saveProfile(
-        profile = profile,
-        pendingPhotoBytes = pendingBytes,
-        removePhoto = draft.removePhoto,
-      )
-      withContext(Dispatchers.IO) {
-        DraftPhotoStorage.deleteTempPhoto(tempPath)
-      }
-      isSaving = false
-      onSaved(saved.id)
     }
   }
 
-  fun performSave() {
+  fun performSave(addAnother: Boolean = false) {
     val trimmedName = draft.name.trim()
     if (trimmedName.isEmpty()) {
       nameError = "Name is required"
@@ -395,10 +423,11 @@ fun PersonEditScreen(
       excludeProfileId = profileId,
     )
     if (match != null) {
+      pendingAddAnother = addAnother
       pendingDuplicate = match
       return
     }
-    commitSave()
+    commitSave(addAnother = addAnother)
   }
 
   Scaffold(
@@ -406,10 +435,7 @@ fun PersonEditScreen(
     containerColor = MaterialTheme.colorScheme.background,
     topBar = {
       TopAppBar(
-        colors = TopAppBarDefaults.topAppBarColors(
-          containerColor = MaterialTheme.colorScheme.background,
-          titleContentColor = MaterialTheme.colorScheme.onBackground,
-        ),
+        colors = NexusFrostedStyle.topAppBarColors(),
         title = { Text(if (profileId == null) "Add person" else "Edit person", fontWeight = FontWeight.SemiBold) },
         navigationIcon = {
           IconButton(onClick = ::cancelAndCleanup) {
@@ -418,7 +444,7 @@ fun PersonEditScreen(
         },
         actions = {
           Button(
-            onClick = ::performSave,
+            onClick = { performSave(addAnother = false) },
             enabled = !isSaving && draft.isInitialized,
             colors = ButtonDefaults.buttonColors(
               containerColor = MaterialTheme.colorScheme.primary,
@@ -446,6 +472,32 @@ fun PersonEditScreen(
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
       val hasPhoto = (draft.pendingPhotoTempPath != null) || (!draft.removePhoto && draft.existingPhotoFileName != null)
+      saveError?.let { msg ->
+        Card(
+          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text(
+            text = msg,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            modifier = Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodyMedium,
+          )
+        }
+      }
+      saveStatusMessage?.let { msg ->
+        Card(
+          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text(
+            text = msg,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            modifier = Modifier.padding(12.dp),
+            style = MaterialTheme.typography.bodyMedium,
+          )
+        }
+      }
       Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -486,6 +538,7 @@ fun PersonEditScreen(
           if (nameError != null && it.isNotBlank()) nameError = null
         },
         label = { Text("Name *") },
+        colors = NexusFrostedStyle.textFieldColors(),
         isError = nameError != null,
         supportingText = nameError?.let { msg -> { Text(msg) } },
         singleLine = true,
@@ -574,7 +627,7 @@ fun PersonEditScreen(
               ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded)
             }
           },
-          colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+          colors = NexusFrostedStyle.textFieldColors(),
           modifier = Modifier
             .fillMaxWidth()
             .menuAnchor(MenuAnchorType.PrimaryEditable, enabled = true),
@@ -637,6 +690,7 @@ fun PersonEditScreen(
         value = draft.whereWeMet,
         onValueChange = { draft = draft.copy(whereWeMet = it) },
         label = { Text("Where we met") },
+        colors = NexusFrostedStyle.textFieldColors(),
         minLines = 2,
         maxLines = 4,
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
@@ -660,6 +714,7 @@ fun PersonEditScreen(
             value = draft.tagInput,
             onValueChange = { draft = draft.copy(tagInput = it) },
             label = { Text("Add tag") },
+            colors = NexusFrostedStyle.textFieldColors(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
@@ -820,11 +875,20 @@ fun PersonEditScreen(
 
       Spacer(modifier = Modifier.height(8.dp))
       Button(
-        onClick = ::performSave,
+        onClick = { performSave(addAnother = false) },
         enabled = !isSaving && draft.isInitialized,
         modifier = Modifier.fillMaxWidth(),
       ) {
         Text(if (profileId == null) "Save person" else "Save changes")
+      }
+      if (profileId == null) {
+        OutlinedButton(
+          onClick = { performSave(addAnother = true) },
+          enabled = !isSaving && draft.isInitialized,
+          modifier = Modifier.fillMaxWidth(),
+        ) {
+          Text("Save and add another")
+        }
       }
       Spacer(modifier = Modifier.height(24.dp))
     }
@@ -857,7 +921,7 @@ fun PersonEditScreen(
         Button(
           onClick = {
             pendingDuplicate = null
-            commitSave()
+            commitSave(addAnother = pendingAddAnother)
           },
         ) {
           Text("Keep separately")
@@ -868,12 +932,18 @@ fun PersonEditScreen(
           TextButton(
             onClick = {
               pendingDuplicate = null
+              pendingAddAnother = false
               cancelAndCleanup()
             },
           ) {
             Text("Skip")
           }
-          TextButton(onClick = { pendingDuplicate = null }) {
+          TextButton(
+            onClick = {
+              pendingDuplicate = null
+              pendingAddAnother = false
+            },
+          ) {
             Text("Edit")
           }
         }
@@ -936,6 +1006,7 @@ private fun MultiContactSection(
                 onRowsChanged(updated)
               },
               label = { Text(if (isOnlyTrailingEmpty) "Add $fieldLabel" else fieldLabel) },
+              colors = NexusFrostedStyle.textFieldColors(),
               singleLine = true,
               keyboardOptions = KeyboardOptions(
                 keyboardType = keyboardType,
