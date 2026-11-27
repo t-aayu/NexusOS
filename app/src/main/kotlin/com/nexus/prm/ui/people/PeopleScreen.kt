@@ -1,7 +1,9 @@
 package com.nexus.prm.ui.people
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +30,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.ContactPage
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -55,11 +58,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nexus.prm.data.ContactGroup
+import com.nexus.prm.data.ContactShareHelper
 import com.nexus.prm.data.PersonCategory
 import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.ui.components.ProfileAvatar
@@ -220,10 +225,12 @@ fun PeopleScreen(
           verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           items(uiState.visibleProfiles, key = { it.id }) { profile ->
+            val context = LocalContext.current
             PersonListCard(
               profile = profile,
               loadPhotoBytes = viewModel::loadPhotoBytes,
               onClick = { onPersonClick(profile.id) },
+              onShareContact = { ContactShareHelper.shareContact(context, profile) },
               onToggleFavourite = { viewModel.toggleFavourite(profile.id) },
             )
           }
@@ -433,21 +440,29 @@ internal fun personCardSubtitle(profile: PersonProfile): String {
   return (primary + fallback).take(3).joinToString(" \u00B7 ")
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PersonListCard(
   profile: PersonProfile,
   loadPhotoBytes: suspend (String) -> ByteArray?,
   onClick: () -> Unit,
+  onShareContact: () -> Unit,
   onToggleFavourite: () -> Unit,
 ) {
-  Card(
-    modifier = Modifier
-      .fillMaxWidth()
-      .clickable(onClick = onClick),
-    shape = RoundedCornerShape(16.dp),
-    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-  ) {
+  var menuExpanded by remember { mutableStateOf(false) }
+
+  Box(modifier = Modifier.fillMaxWidth()) {
+    Card(
+      modifier = Modifier
+        .fillMaxWidth()
+        .combinedClickable(
+          onClick = onClick,
+          onLongClick = { menuExpanded = true },
+        ),
+      shape = RoundedCornerShape(16.dp),
+      border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+      colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
     Row(
       modifier = Modifier
         .fillMaxWidth()
@@ -507,6 +522,21 @@ private fun PersonListCard(
           tint = if (profile.isFavourite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
+    }
+    }
+    DropdownMenu(
+      expanded = menuExpanded,
+      onDismissRequest = { menuExpanded = false },
+      containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+      DropdownMenuItem(
+        text = { Text("Share contact") },
+        leadingIcon = { Icon(Icons.Outlined.Share, contentDescription = null) },
+        onClick = {
+          menuExpanded = false
+          onShareContact()
+        },
+      )
     }
   }
 }

@@ -23,13 +23,17 @@ import com.nexus.prm.ui.settings.OwnerCardScreen
 import com.nexus.prm.ui.settings.SettingsScreen
 
 @Composable
-fun MainNavigation(quickCaptureToken: Int = 0) {
+fun MainNavigation(
+  quickCaptureToken: Int = 0,
+  callerProfileEvent: Pair<Int, String>? = null,
+) {
   val context = LocalContext.current
   val app = context.applicationContext as NexusApp
   val repository = app.directoryRepository
   val autoBackupManager = app.autoBackupManager
   val backStack = rememberNavBackStack(People)
   var handledQuickCaptureToken by rememberSaveable { mutableIntStateOf(0) }
+  var handledCallerProfileToken by rememberSaveable { mutableIntStateOf(0) }
 
   LaunchedEffect(quickCaptureToken) {
     if (quickCaptureToken > handledQuickCaptureToken) {
@@ -37,6 +41,17 @@ fun MainNavigation(quickCaptureToken: Int = 0) {
       val top = backStack.lastOrNull()
       if (top !is PersonEdit || top.profileId != null) {
         backStack.add(PersonEdit(profileId = null, focusNameOnOpen = true))
+      }
+    }
+  }
+
+  LaunchedEffect(callerProfileEvent) {
+    if (callerProfileEvent != null && callerProfileEvent.first > handledCallerProfileToken) {
+      handledCallerProfileToken = callerProfileEvent.first
+      val targetId = callerProfileEvent.second
+      val top = backStack.lastOrNull()
+      if (top !is PersonDetail || top.profileId != targetId) {
+        backStack.add(PersonDetail(profileId = targetId))
       }
     }
   }

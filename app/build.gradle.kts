@@ -20,8 +20,8 @@ android {
     applicationId = "com.nexus.prm"
     minSdk = 24
     targetSdk = 36
-    versionCode = 15
-    versionName = "1.0.8"
+    versionCode = 16
+    versionName = "1.0.9"
   }
 
   signingConfigs {

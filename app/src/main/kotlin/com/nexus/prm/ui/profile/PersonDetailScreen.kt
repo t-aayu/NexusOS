@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -62,6 +63,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nexus.prm.data.ContactShareHelper
 import com.nexus.prm.data.DirectoryRepository
 import com.nexus.prm.data.IntroductionRecord
 import com.nexus.prm.data.PersonProfile
@@ -113,6 +115,9 @@ fun PersonDetailScreen(
         },
         actions = {
           if (profile != null) {
+            IconButton(onClick = { ContactShareHelper.shareContact(context, profile) }) {
+              Icon(Icons.Outlined.Share, contentDescription = "Share contact")
+            }
             IconButton(onClick = { scope.launch { repository.toggleFavourite(profile.id) } }) {
               Icon(
                 imageVector = if (profile.isFavourite) Icons.Filled.Star else Icons.Outlined.StarOutline,

@@ -8,6 +8,7 @@ import com.nexus.prm.data.FixedBackupLocation
 import com.nexus.prm.data.LocalDirectoryRepository
 import com.nexus.prm.data.LocalStorageCrypto
 import com.nexus.prm.data.OwnerCard
+import com.nexus.prm.data.OwnerCardVCard
 import com.nexus.prm.data.PersonCategory
 import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.data.PostingEntry
@@ -692,5 +693,46 @@ class NexusV101VerificationTest {
     val twoPrimaryOneFallback = full.copy(serviceBatch = "")
     assertEquals("IAS \u00B7 UP \u00B7 DM", personCardSubtitle(twoPrimaryOneFallback))
     assertFalse(personCardSubtitle(twoPrimaryOneFallback).contains("Â"))
+  }
+
+  @Test
+  fun buildContactVCard_includesNamePhoneEmailExcludesPrivateFieldsAndSupportsNameOnly() {
+    val full = PersonProfile(
+      id = "v1",
+      name = "Priya Nair",
+      phone = "+91 98765 43210",
+      email = "priya@example.com",
+      whereWeMet = "Secret meeting spot",
+      otherDetails = "Private note line",
+      tags = listOf("ConfidentialTag"),
+      photoFileName = "photo.jpg",
+      postings = listOf(PostingEntry(id = "p1", organisation = "SecretOrg", isCurrent = true)),
+      introductions = listOf(com.nexus.prm.data.IntroductionRecord(id = "i1", introducerName = "PrivateIntroducer")),
+      createdAtEpochMs = 1L,
+      updatedAtEpochMs = 1L,
+    )
+    val vcard = OwnerCardVCard.buildContactVCard(full)
+    assertTrue(vcard.contains("BEGIN:VCARD"))
+    assertTrue(vcard.contains("FN:Priya Nair"))
+    assertTrue(vcard.contains("TEL;TYPE=CELL:+91 98765 43210"))
+    assertTrue(vcard.contains("EMAIL:priya@example.com"))
+    assertTrue(vcard.contains("END:VCARD"))
+    assertFalse(vcard.contains("Secret meeting spot"))
+    assertFalse(vcard.contains("Private note line"))
+    assertFalse(vcard.contains("ConfidentialTag"))
+    assertFalse(vcard.contains("photo.jpg"))
+    assertFalse(vcard.contains("SecretOrg"))
+    assertFalse(vcard.contains("PrivateIntroducer"))
+
+    val nameOnly = PersonProfile(
+      id = "v2",
+      name = "Name Only",
+      createdAtEpochMs = 1L,
+      updatedAtEpochMs = 1L,
+    )
+    val nameOnlyVCard = OwnerCardVCard.buildContactVCard(nameOnly)
+    assertTrue(nameOnlyVCard.contains("FN:Name Only"))
+    assertFalse(nameOnlyVCard.contains("TEL"))
+    assertFalse(nameOnlyVCard.contains("EMAIL"))
   }
 }

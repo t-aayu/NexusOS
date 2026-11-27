@@ -88,6 +88,31 @@ object OwnerCardVCard {
     )
   }
 
+  /**
+   * Builds a minimal vCard 3.0 payload for sharing a contact, intentionally omitting
+   * private fields (whereWeMet, otherDetails, tags, groups, photos, postings, introductions).
+   */
+  fun buildContactVCard(profile: PersonProfile): String {
+    val name = profile.name.trim()
+    val phone = profile.phone.trim()
+    val email = profile.email.trim()
+    return StringBuilder().apply {
+      appendLine("BEGIN:VCARD")
+      appendLine("VERSION:3.0")
+      if (name.isNotEmpty()) {
+        appendLine("FN:${escapeVCard(name)}")
+        appendLine("N:;${escapeVCard(name)};;;")
+      }
+      if (phone.isNotEmpty()) {
+        appendLine("TEL;TYPE=CELL:${escapeVCard(phone)}")
+      }
+      if (email.isNotEmpty()) {
+        appendLine("EMAIL:${escapeVCard(email)}")
+      }
+      append("END:VCARD")
+    }.toString()
+  }
+
   fun generateQrBitmap(payload: String, sizePx: Int = 640): Bitmap? {
     if (payload.isBlank()) return null
     val hints = mapOf(
