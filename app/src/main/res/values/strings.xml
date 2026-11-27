@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">Nexus</string>
+    <string name="widget_quick_capture_name">Nexus Quick Capture</string>
+    <string name="widget_quick_capture_subtitle">Quick Capture</string>
+    <string name="widget_quick_capture_action">+ Add person</string>
+    <string name="widget_quick_capture_description">Open Add person directly to capture a new contact.</string>
 </resources>

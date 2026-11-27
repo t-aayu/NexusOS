@@ -37,7 +37,7 @@ object CsvExporter {
         profile.name,
         profile.phone,
         profile.email,
-        profile.category?.label.orEmpty(),
+        profile.categoryLabel().orEmpty(),
         currentOrg,
         currentDesignation,
         profile.service,

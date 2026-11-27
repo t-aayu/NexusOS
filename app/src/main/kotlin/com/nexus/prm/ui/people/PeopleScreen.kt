@@ -197,6 +197,7 @@ fun PeopleScreen(
 
       FilterBar(
         filter = uiState.filter,
+        availableCategories = uiState.availableCategories,
         trainingGroups = uiState.trainingGroups,
         reusableGroups = uiState.reusableGroups,
         onToggleFavourites = viewModel::onToggleFavouritesOnly,
@@ -235,11 +236,12 @@ fun PeopleScreen(
 @Composable
 private fun FilterBar(
   filter: PeopleFilterState,
+  availableCategories: List<String>,
   trainingGroups: List<String>,
   reusableGroups: List<ContactGroup>,
   onToggleFavourites: () -> Unit,
   onToggleRecent: () -> Unit,
-  onSelectCategory: (PersonCategory?) -> Unit,
+  onSelectCategory: (String?) -> Unit,
   onSelectGroup: (String?) -> Unit,
   onSelectReusableGroup: (String?) -> Unit,
 ) {
@@ -293,11 +295,11 @@ private fun FilterBar(
     item {
       Box {
         FilterChip(
-          selected = filter.selectedCategory != null,
+          selected = filter.selectedCategoryLabel != null,
           onClick = { categoryMenuExpanded = true },
           colors = chipColors,
-          label = { Text(filter.selectedCategory?.label ?: "Category") },
-          leadingIcon = if (filter.selectedCategory != null) {
+          label = { Text(filter.selectedCategoryLabel ?: "Category") },
+          leadingIcon = if (filter.selectedCategoryLabel != null) {
             { Icon(Icons.Filled.Check, contentDescription = null) }
           } else null,
           trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
@@ -314,14 +316,14 @@ private fun FilterBar(
               categoryMenuExpanded = false
             },
           )
-          PersonCategory.entries.forEach { category ->
+          availableCategories.forEach { categoryLabel ->
             DropdownMenuItem(
-              text = { Text(category.label) },
-              trailingIcon = if (filter.selectedCategory == category) {
+              text = { Text(categoryLabel) },
+              trailingIcon = if (filter.selectedCategoryLabel.equals(categoryLabel, ignoreCase = true)) {
                 { Icon(Icons.Filled.Check, contentDescription = null) }
               } else null,
               onClick = {
-                onSelectCategory(category)
+                onSelectCategory(categoryLabel)
                 categoryMenuExpanded = false
               },
             )
@@ -454,7 +456,7 @@ private fun PersonListCard(
           overflow = TextOverflow.Ellipsis,
         )
         val primaryMeta = listOfNotNull(
-          profile.category?.label,
+          profile.categoryLabel(),
           profile.trainingGroup.takeIf { it.isNotBlank() },
           profile.service.takeIf { it.isNotBlank() },
         ).joinToString(" Â· ")

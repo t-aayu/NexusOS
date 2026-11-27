@@ -8,6 +8,15 @@ enum class PersonCategory(val label: String) {
   FACULTY("Faculty"),
   SENIOR_OFFICER("Senior officer"),
   OTHER("Other"),
+  ;
+
+  companion object {
+    fun fromLabel(raw: String): PersonCategory? {
+      val trimmed = raw.trim()
+      if (trimmed.isEmpty()) return null
+      return entries.firstOrNull { it.label.equals(trimmed, ignoreCase = true) }
+    }
+  }
 }
 
 @Serializable
@@ -105,6 +114,7 @@ data class PersonProfile(
   val name: String,
   val phone: String = "",
   val category: PersonCategory? = null,
+  val customCategory: String? = null,
   val whereWeMet: String = "",
   val email: String = "",
   val organisation: String = "",
@@ -122,6 +132,9 @@ data class PersonProfile(
   val createdAtEpochMs: Long,
   val updatedAtEpochMs: Long,
 ) {
+  fun categoryLabel(): String? =
+    customCategory?.trim()?.takeIf { it.isNotEmpty() } ?: category?.label
+
   fun currentPosting(): PostingEntry? = postings.firstOrNull { it.isCurrent }
 
   fun withSyncedPostings(): PersonProfile {

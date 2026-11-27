@@ -7,7 +7,10 @@ import kotlinx.serialization.Serializable
 
 @Serializable data class PersonDetail(val profileId: String) : NavKey
 
-@Serializable data class PersonEdit(val profileId: String? = null) : NavKey
+@Serializable data class PersonEdit(
+  val profileId: String? = null,
+  val focusNameOnOpen: Boolean = false,
+) : NavKey
 
 @Serializable data object Settings : NavKey
 

@@ -28,6 +28,7 @@ object DirectorySearch {
       profile.organisation,
       profile.trainingGroup,
       profile.whereWeMet,
+      profile.categoryLabel().orEmpty(),
     )
     if (textFields.any { it.contains(trimmed, ignoreCase = true) }) {
       return true
@@ -56,9 +57,12 @@ object DirectorySearch {
     favouritesOnly: Boolean,
     recentlyAddedOnly: Boolean,
     selectedGroupMemberIds: Set<String>? = null,
+    selectedCategoryLabel: String? = null,
   ): List<PersonProfile> {
+    val effectiveCategoryLabel = selectedCategoryLabel?.trim()?.takeIf { it.isNotEmpty() }
+      ?: selectedCategory?.label
     val filtered = profiles.filter { profile ->
-      (selectedCategory == null || profile.category == selectedCategory) &&
+      (effectiveCategoryLabel == null || profile.categoryLabel()?.equals(effectiveCategoryLabel, ignoreCase = true) == true) &&
         (selectedTrainingGroup == null || profile.trainingGroup.trim().equals(selectedTrainingGroup, ignoreCase = true)) &&
         (selectedGroupMemberIds == null || profile.id in selectedGroupMemberIds) &&
         (!favouritesOnly || profile.isFavourite) &&
@@ -120,4 +124,22 @@ object DirectorySearch {
     }
     return result
   }
+
+  fun normalizeCategoryList(rawCategories: List<String>): List<String> {
+    val result = mutableListOf<String>()
+    val seenLower = mutableSetOf<String>()
+    for (raw in rawCategories) {
+      val trimmed = raw.trim()
+      if (trimmed.isEmpty()) continue
+      if (PersonCategory.fromLabel(trimmed) != null) continue
+      val lower = trimmed.lowercase()
+      if (seenLower.add(lower)) {
+        result += trimmed
+      }
+    }
+    return result
+  }
+
+  fun allCategoryOptions(customCategories: List<String>): List<String> =
+    PersonCategory.entries.map { it.label } + normalizeCategoryList(customCategories)
 }

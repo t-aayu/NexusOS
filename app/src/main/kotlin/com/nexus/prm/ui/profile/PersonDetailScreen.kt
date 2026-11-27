@@ -186,11 +186,11 @@ fun PersonDetailScreen(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
         }
-        if (profile.category != null) {
+        profile.categoryLabel()?.let { categoryLabel ->
           Spacer(modifier = Modifier.height(6.dp))
           AssistChip(
             onClick = {},
-            label = { Text(profile.category.label) },
+            label = { Text(categoryLabel) },
             colors = AssistChipDefaults.assistChipColors(
               containerColor = MaterialTheme.colorScheme.secondaryContainer,
               labelColor = MaterialTheme.colorScheme.onSecondaryContainer,

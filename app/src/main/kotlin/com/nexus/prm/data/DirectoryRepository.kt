@@ -26,6 +26,7 @@ data class DirectorySnapshot(
   val profiles: List<PersonProfile> = emptyList(),
   val groups: List<ContactGroup> = emptyList(),
   val ownerCard: OwnerCard = OwnerCard(),
+  val customCategories: List<String> = emptyList(),
 ) {
   companion object {
     const val CURRENT_SCHEMA_VERSION = 3
@@ -39,6 +40,7 @@ data class BackupManifest(
   val profiles: List<PersonProfile>,
   val groups: List<ContactGroup> = emptyList(),
   val ownerCard: OwnerCard = OwnerCard(),
+  val customCategories: List<String> = emptyList(),
 )
 
 data class BackupPreview(
@@ -47,12 +49,16 @@ data class BackupPreview(
   val ownerCard: OwnerCard,
   val photos: Map<String, ByteArray>,
   val createdAtEpochMs: Long,
+  val customCategories: List<String> = emptyList(),
 )
 
 interface DirectoryRepository {
   val profiles: StateFlow<List<PersonProfile>>
   val groups: StateFlow<List<ContactGroup>>
   val ownerCard: StateFlow<OwnerCard>
+  val customCategories: StateFlow<List<String>>
+
+  suspend fun addCustomCategory(label: String): String
 
   suspend fun getProfile(id: String): PersonProfile?
   suspend fun saveProfile(
@@ -126,6 +132,7 @@ class LocalDirectoryRepository(
     val profiles: List<PersonProfile>,
     val groups: List<ContactGroup>,
     val ownerCard: OwnerCard,
+    val customCategories: List<String>,
     val photos: Map<String, ByteArray>,
   )
 
@@ -139,11 +146,33 @@ class LocalDirectoryRepository(
   private val _ownerCard = MutableStateFlow(initialSnapshot.ownerCard)
   override val ownerCard: StateFlow<OwnerCard> = _ownerCard.asStateFlow()
 
+  private val _customCategories = MutableStateFlow(
+    DirectorySearch.normalizeCategoryList(
+      initialSnapshot.customCategories + initialSnapshot.profiles.mapNotNull { it.customCategory },
+    ),
+  )
+  override val customCategories: StateFlow<List<String>> = _customCategories.asStateFlow()
+
   private fun loadInitialSnapshot(): DirectorySnapshot {
     if (!directoryFile.exists()) return DirectorySnapshot()
     val encrypted = directoryFile.readBytes()
     val decrypted = crypto.decrypt(encrypted)
     return json.decodeFromString<DirectorySnapshot>(decrypted.decodeToString())
+  }
+
+  override suspend fun addCustomCategory(label: String): String = withContext(ioDispatcher) {
+    mutex.withLock {
+      val trimmed = label.trim()
+      require(trimmed.isNotEmpty()) { "Category name must not be blank" }
+      PersonCategory.fromLabel(trimmed)?.let { return@withLock it.label }
+      val existing = _customCategories.value.firstOrNull { it.equals(trimmed, ignoreCase = true) }
+      if (existing != null) return@withLock existing
+
+      val updated = DirectorySearch.normalizeCategoryList(_customCategories.value + trimmed)
+      persistSnapshot(_profiles.value, _groups.value, _ownerCard.value, updated)
+      _customCategories.value = updated
+      trimmed
+    }
   }
 
   override suspend fun getProfile(id: String): PersonProfile? =
@@ -199,9 +228,13 @@ class LocalDirectoryRepository(
       } else {
         _profiles.value.map { if (it.id == normalized.id) normalized else it }
       }
+      val updatedCategories = DirectorySearch.normalizeCategoryList(
+        _customCategories.value + listOfNotNull(normalized.customCategory),
+      )
 
-      persistSnapshot(updatedList, _groups.value, _ownerCard.value)
+      persistSnapshot(updatedList, _groups.value, _ownerCard.value, updatedCategories)
       _profiles.value = updatedList
+      _customCategories.value = updatedCategories
 
       if (oldPhoto != null && oldPhoto != newPhotoFileName) {
         deletePhotoFile(oldPhoto)
@@ -315,9 +348,20 @@ class LocalDirectoryRepository(
   ): PersonProfile {
     val trimmedName = profile.name.trim()
     require(trimmedName.isNotEmpty()) { "Name must not be blank" }
+    val trimmedCustomCategory = profile.customCategory?.trim()?.takeIf { it.isNotEmpty() }
+    val matchedBuiltIn = trimmedCustomCategory?.let { PersonCategory.fromLabel(it) } ?: profile.category
+    val canonicalCustom = if (matchedBuiltIn != null) {
+      null
+    } else {
+      trimmedCustomCategory?.let { raw ->
+        _customCategories.value.firstOrNull { it.equals(raw, ignoreCase = true) } ?: raw
+      }
+    }
     return profile.copy(
       name = trimmedName,
       phone = profile.phone.trim(),
+      category = matchedBuiltIn,
+      customCategory = canonicalCustom,
       whereWeMet = profile.whereWeMet.trim(),
       email = profile.email.trim(),
       organisation = profile.organisation.trim(),
@@ -463,6 +507,7 @@ class LocalDirectoryRepository(
         profiles = currentProfiles,
         groups = _groups.value,
         ownerCard = _ownerCard.value,
+        customCategories = _customCategories.value,
         photos = capturedPhotos,
       )
     }
@@ -473,6 +518,7 @@ class LocalDirectoryRepository(
       profiles = snapshot.profiles,
       groups = snapshot.groups,
       ownerCard = snapshot.ownerCard,
+      customCategories = snapshot.customCategories,
     )
     val zipBytes = ByteArrayOutputStream().use { baos ->
       ZipOutputStream(baos).use { zip ->
@@ -546,6 +592,9 @@ class LocalDirectoryRepository(
         ownerCard = manifest.ownerCard,
         photos = photos,
         createdAtEpochMs = manifest.createdAtEpochMs,
+        customCategories = DirectorySearch.normalizeCategoryList(
+          manifest.customCategories + manifest.profiles.mapNotNull { it.customCategory },
+        ),
       )
     }
 
@@ -575,10 +624,14 @@ class LocalDirectoryRepository(
           }
         }
 
-        persistSnapshot(candidateProfiles, preview.groups, preview.ownerCard)
+        val restoredCategories = DirectorySearch.normalizeCategoryList(
+          preview.customCategories + candidateProfiles.mapNotNull { it.customCategory },
+        )
+        persistSnapshot(candidateProfiles, preview.groups, preview.ownerCard, restoredCategories)
         _profiles.value = candidateProfiles
         _groups.value = preview.groups
         _ownerCard.value = preview.ownerCard
+        _customCategories.value = restoredCategories
 
         for (obsolete in oldPhotos) {
           deletePhotoFile(obsolete)
@@ -603,6 +656,7 @@ class LocalDirectoryRepository(
         localOwnerCard = _ownerCard.value,
         backupPreview = preview,
         keepDuplicateIds = keepDuplicateIds,
+        localCustomCategories = _customCategories.value,
       )
 
       val stagedByIncomingName = linkedMapOf<String, String>()
@@ -627,10 +681,16 @@ class LocalDirectoryRepository(
           if (assigned != null) profile.copy(photoFileName = assigned) else profile
         }
 
-        persistSnapshot(candidateProfiles, outcome.mergedGroups, outcome.mergedOwnerCard)
+        persistSnapshot(
+          candidateProfiles,
+          outcome.mergedGroups,
+          outcome.mergedOwnerCard,
+          outcome.mergedCustomCategories,
+        )
         _profiles.value = candidateProfiles
         _groups.value = outcome.mergedGroups
         _ownerCard.value = outcome.mergedOwnerCard
+        _customCategories.value = outcome.mergedCustomCategories
         outcome.copy(mergedProfiles = candidateProfiles)
       } catch (t: Throwable) {
         for (staged in stagedFiles) {
@@ -645,6 +705,7 @@ class LocalDirectoryRepository(
     profiles: List<PersonProfile>,
     groups: List<ContactGroup>,
     ownerCard: OwnerCard,
+    customCategories: List<String> = _customCategories.value,
   ) {
     beforeSnapshotPersistHook?.invoke()
     if (!filesDir.exists()) filesDir.mkdirs()
@@ -653,6 +714,7 @@ class LocalDirectoryRepository(
       profiles = profiles,
       groups = groups,
       ownerCard = ownerCard,
+      customCategories = customCategories,
     )
     val encrypted = crypto.encrypt(json.encodeToString(snapshot).encodeToByteArray())
     val tmpFile = File(filesDir, "nexus_directory.enc.tmp")

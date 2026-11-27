@@ -30,13 +30,17 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -56,7 +60,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -87,6 +94,8 @@ data class PersonEditDraft(
   val name: String = "",
   val phone: String = "",
   val category: PersonCategory? = null,
+  val customCategory: String? = null,
+  val categoryQuery: String = "",
   val whereWeMet: String = "",
   val email: String = "",
   val organisation: String = "",
@@ -111,6 +120,8 @@ data class PersonEditDraft(
       name = existing.name,
       phone = existing.phone,
       category = existing.category,
+      customCategory = existing.customCategory,
+      categoryQuery = existing.categoryLabel().orEmpty(),
       whereWeMet = existing.whereWeMet,
       email = existing.email,
       organisation = existing.organisation,
@@ -183,16 +194,25 @@ fun PersonEditScreen(
   onBack: () -> Unit,
   onSaved: (String) -> Unit,
   modifier: Modifier = Modifier,
+  focusNameOnOpen: Boolean = false,
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
+  val keyboardController = LocalSoftwareKeyboardController.current
+  val nameFocusRequester = remember { FocusRequester() }
+  var hasFocusedName by rememberSaveable(profileId) { mutableStateOf(false) }
 
   var draft by rememberSaveable(profileId, stateSaver = PersonEditDraft.Saver) {
     mutableStateOf(PersonEditDraft.initialFor(profileId))
   }
 
   val allProfiles by repository.profiles.collectAsStateWithLifecycle()
+  val savedCustomCategories by repository.customCategories.collectAsStateWithLifecycle()
+  val allCategoryOptions = remember(savedCustomCategories, allProfiles) {
+    DirectorySearch.allCategoryOptions(savedCustomCategories + allProfiles.mapNotNull { it.customCategory })
+  }
   val suggestedTags = remember(allProfiles) { DirectorySearch.distinctTags(allProfiles) }
+  var categoryExpanded by remember { mutableStateOf(false) }
 
   var pendingPhotoBytes by remember { mutableStateOf<ByteArray?>(null) }
   LaunchedEffect(draft.pendingPhotoTempPath) {
@@ -214,7 +234,7 @@ fun PersonEditScreen(
     cancelAndCleanup()
   }
 
-  LaunchedEffect(profileId) {
+  LaunchedEffect(profileId, draft.isInitialized, focusNameOnOpen) {
     if (!draft.isInitialized && profileId != null) {
       val existing = repository.getProfile(profileId)
       draft = if (existing != null) {
@@ -222,6 +242,11 @@ fun PersonEditScreen(
       } else {
         draft.copy(isInitialized = true)
       }
+    }
+    if (focusNameOnOpen && draft.isInitialized && !hasFocusedName) {
+      hasFocusedName = true
+      nameFocusRequester.requestFocus()
+      keyboardController?.show()
     }
   }
 
@@ -251,11 +276,21 @@ fun PersonEditScreen(
       val pendingBytes = withContext(Dispatchers.IO) {
         DraftPhotoStorage.readTempPhoto(tempPath)
       }
+      val matchedSelectedLabel = draft.categoryQuery.trim().takeIf { it.isNotEmpty() }?.let { typed ->
+        allCategoryOptions.firstOrNull { it.equals(typed, ignoreCase = true) }
+      }
+      val resolvedBuiltIn = matchedSelectedLabel?.let { PersonCategory.fromLabel(it) } ?: draft.category
+      val resolvedCustom = when {
+        resolvedBuiltIn != null -> null
+        matchedSelectedLabel != null -> matchedSelectedLabel
+        else -> draft.customCategory
+      }
       val profile = PersonProfile(
         id = base?.id ?: UUID.randomUUID().toString(),
         name = trimmedName,
         phone = draft.phone,
-        category = draft.category,
+        category = resolvedBuiltIn,
+        customCategory = resolvedCustom,
         whereWeMet = draft.whereWeMet,
         email = draft.email,
         organisation = draft.organisation,
@@ -382,7 +417,9 @@ fun PersonEditScreen(
         supportingText = nameError?.let { msg -> { Text(msg) } },
         singleLine = true,
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+          .fillMaxWidth()
+          .focusRequester(nameFocusRequester),
       )
 
       OutlinedTextField(
@@ -394,32 +431,104 @@ fun PersonEditScreen(
         modifier = Modifier.fillMaxWidth(),
       )
 
-      Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-          text = "Category (optional)",
-          style = MaterialTheme.typography.labelLarge,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
+      val trimmedCategoryQuery = draft.categoryQuery.trim()
+      val filteredCategories = remember(allCategoryOptions, trimmedCategoryQuery) {
+        if (trimmedCategoryQuery.isEmpty()) {
+          allCategoryOptions
+        } else {
+          allCategoryOptions.filter { it.contains(trimmedCategoryQuery, ignoreCase = true) }
+        }
+      }
+      val hasExactCategoryMatch = trimmedCategoryQuery.isNotEmpty() &&
+        allCategoryOptions.any { it.equals(trimmedCategoryQuery, ignoreCase = true) }
+
+      ExposedDropdownMenuBox(
+        expanded = categoryExpanded,
+        onExpandedChange = { categoryExpanded = it },
+      ) {
+        OutlinedTextField(
+          value = draft.categoryQuery,
+          onValueChange = { typed ->
+            val exact = allCategoryOptions.firstOrNull { it.equals(typed.trim(), ignoreCase = true) }
+            val builtIn = exact?.let { PersonCategory.fromLabel(it) }
+            draft = draft.copy(
+              categoryQuery = typed,
+              category = builtIn,
+              customCategory = if (builtIn == null) exact else null,
+            )
+            categoryExpanded = true
+          },
+          label = { Text("Category (optional)") },
+          singleLine = true,
+          trailingIcon = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+              if (draft.categoryQuery.isNotEmpty()) {
+                IconButton(
+                  onClick = {
+                    draft = draft.copy(categoryQuery = "", category = null, customCategory = null)
+                    categoryExpanded = true
+                  },
+                ) {
+                  Icon(Icons.Filled.Close, contentDescription = "Clear category")
+                }
+              }
+              ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded)
+            }
+          },
+          colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+          modifier = Modifier
+            .fillMaxWidth()
+            .menuAnchor(MenuAnchorType.PrimaryEditable, enabled = true),
         )
-        FlowRow(
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-          verticalArrangement = Arrangement.spacedBy(4.dp),
+        ExposedDropdownMenu(
+          expanded = categoryExpanded,
+          onDismissRequest = { categoryExpanded = false },
         ) {
-          val categoryChipColors = FilterChipDefaults.filterChipColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-            selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-            selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
-            selectedLeadingIconColor = MaterialTheme.colorScheme.secondary,
-          )
-          PersonCategory.entries.forEach { option ->
-            val selected = draft.category == option
-            FilterChip(
-              selected = selected,
-              colors = categoryChipColors,
-              onClick = { draft = draft.copy(category = if (selected) null else option) },
-              leadingIcon = if (selected) {
+          filteredCategories.forEach { option ->
+            DropdownMenuItem(
+              text = { Text(option) },
+              trailingIcon = if (draft.categoryQuery.trim().equals(option, ignoreCase = true)) {
                 { Icon(Icons.Filled.Check, contentDescription = null) }
               } else null,
-              label = { Text(option.label) },
+              onClick = {
+                val builtIn = PersonCategory.fromLabel(option)
+                draft = draft.copy(
+                  categoryQuery = option,
+                  category = builtIn,
+                  customCategory = if (builtIn == null) option else null,
+                )
+                categoryExpanded = false
+              },
+            )
+          }
+          if (trimmedCategoryQuery.isNotEmpty() && !hasExactCategoryMatch) {
+            DropdownMenuItem(
+              text = {
+                Text(
+                  text = "Create \u201C$trimmedCategoryQuery\u201D",
+                  fontWeight = FontWeight.SemiBold,
+                  color = MaterialTheme.colorScheme.primary,
+                )
+              },
+              leadingIcon = {
+                Icon(
+                  imageVector = Icons.Filled.Add,
+                  contentDescription = null,
+                  tint = MaterialTheme.colorScheme.primary,
+                )
+              },
+              onClick = {
+                categoryExpanded = false
+                scope.launch {
+                  val savedLabel = repository.addCustomCategory(trimmedCategoryQuery)
+                  val builtIn = PersonCategory.fromLabel(savedLabel)
+                  draft = draft.copy(
+                    categoryQuery = savedLabel,
+                    category = builtIn,
+                    customCategory = if (builtIn == null) savedLabel else null,
+                  )
+                }
+              },
             )
           }
         }

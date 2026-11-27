@@ -16,7 +16,7 @@ import kotlinx.coroutines.launch
 
 data class PeopleFilterState(
   val query: String = "",
-  val selectedCategory: PersonCategory? = null,
+  val selectedCategoryLabel: String? = null,
   val selectedTrainingGroup: String? = null,
   val selectedReusableGroupId: String? = null,
   val favouritesOnly: Boolean = false,
@@ -26,6 +26,7 @@ data class PeopleFilterState(
 data class PeopleUiState(
   val totalCount: Int = 0,
   val visibleProfiles: List<PersonProfile> = emptyList(),
+  val availableCategories: List<String> = DirectorySearch.allCategoryOptions(emptyList()),
   val trainingGroups: List<String> = emptyList(),
   val reusableGroups: List<ContactGroup> = emptyList(),
   val filter: PeopleFilterState = PeopleFilterState(),
@@ -38,13 +39,25 @@ class PeopleViewModel(
   private val filterState = MutableStateFlow(PeopleFilterState())
 
   val uiState: StateFlow<PeopleUiState> =
-    combine(repository.profiles, repository.groups, filterState) { allProfiles, allGroups, filter ->
+    combine(
+      repository.profiles,
+      repository.groups,
+      repository.customCategories,
+      filterState,
+    ) { allProfiles, allGroups, customCategories, filter ->
+      val availableCategories = DirectorySearch.allCategoryOptions(
+        customCategories + allProfiles.mapNotNull { it.customCategory },
+      )
+      val activeCategory = filter.selectedCategoryLabel?.takeIf { selected ->
+        availableCategories.any { it.equals(selected, ignoreCase = true) }
+      }
       val trainingGroups = DirectorySearch.distinctTrainingGroups(allProfiles)
       val activeTrainingGroup = filter.selectedTrainingGroup?.takeIf { selected ->
         trainingGroups.any { it.equals(selected, ignoreCase = true) }
       }
       val activeReusableGroup = allGroups.firstOrNull { it.id == filter.selectedReusableGroupId }
       val normalizedFilter = filter.copy(
+        selectedCategoryLabel = activeCategory,
         selectedTrainingGroup = activeTrainingGroup,
         selectedReusableGroupId = activeReusableGroup?.id,
       )
@@ -54,12 +67,14 @@ class PeopleViewModel(
         visibleProfiles = DirectorySearch.filterAndSort(
           profiles = allProfiles,
           query = normalizedFilter.query,
-          selectedCategory = normalizedFilter.selectedCategory,
+          selectedCategory = null,
           selectedTrainingGroup = normalizedFilter.selectedTrainingGroup,
           favouritesOnly = normalizedFilter.favouritesOnly,
           recentlyAddedOnly = normalizedFilter.recentlyAddedOnly,
           selectedGroupMemberIds = activeReusableGroup?.memberIds?.toSet(),
+          selectedCategoryLabel = normalizedFilter.selectedCategoryLabel,
         ),
+        availableCategories = availableCategories,
         trainingGroups = trainingGroups,
         reusableGroups = allGroups,
         filter = normalizedFilter,
@@ -77,6 +92,9 @@ class PeopleViewModel(
           favouritesOnly = false,
           recentlyAddedOnly = false,
         ),
+        availableCategories = DirectorySearch.allCategoryOptions(
+          repository.customCategories.value + repository.profiles.value.mapNotNull { it.customCategory },
+        ),
         trainingGroups = DirectorySearch.distinctTrainingGroups(repository.profiles.value),
         reusableGroups = repository.groups.value,
       ),
@@ -86,8 +104,8 @@ class PeopleViewModel(
     filterState.value = filterState.value.copy(query = query)
   }
 
-  fun onCategorySelected(category: PersonCategory?) {
-    filterState.value = filterState.value.copy(selectedCategory = category)
+  fun onCategorySelected(categoryLabel: String?) {
+    filterState.value = filterState.value.copy(selectedCategoryLabel = categoryLabel)
   }
 
   fun onTrainingGroupSelected(group: String?) {

@@ -25,6 +25,7 @@ data class MergeOutcome(
   val mergedOwnerCard: OwnerCard,
   val photosToWrite: Map<String, ByteArray>,
   val photoAssignmentsByProfileId: Map<String, String> = emptyMap(),
+  val mergedCustomCategories: List<String> = emptyList(),
 )
 
 object RestoreMerger {
@@ -79,6 +80,7 @@ object RestoreMerger {
     localOwnerCard: OwnerCard,
     backupPreview: BackupPreview,
     keepDuplicateIds: Set<String>,
+    localCustomCategories: List<String> = emptyList(),
   ): MergeOutcome {
     val preview = buildPreview(localProfiles, backupPreview)
     val mergedById = linkedMapOf<String, PersonProfile>()
@@ -123,10 +125,12 @@ object RestoreMerger {
       val localIntroIds = local.introductions.map { it.id }.toSet()
       val mergedIntros = local.introductions + incoming.introductions.filter { it.id !in localIntroIds }
 
+      val hasLocalCategory = local.categoryLabel() != null
       val merged = local.copy(
         name = local.name.ifBlank { incoming.name },
         phone = local.phone.ifBlank { incoming.phone },
-        category = local.category ?: incoming.category,
+        category = if (hasLocalCategory) local.category else incoming.category,
+        customCategory = if (hasLocalCategory) local.customCategory else incoming.customCategory,
         whereWeMet = local.whereWeMet.ifBlank { incoming.whereWeMet },
         email = local.email.ifBlank { incoming.email },
         organisation = local.organisation.ifBlank { incoming.organisation },
@@ -206,12 +210,19 @@ object RestoreMerger {
       localOwnerCard
     }
 
+    val mergedCustomCategories = DirectorySearch.normalizeCategoryList(
+      localCustomCategories +
+        backupPreview.customCategories +
+        mergedProfiles.mapNotNull { it.customCategory },
+    )
+
     return MergeOutcome(
       mergedProfiles = mergedProfiles,
       mergedGroups = mergedGroups,
       mergedOwnerCard = mergedOwnerCard,
       photosToWrite = photosToWrite,
       photoAssignmentsByProfileId = photoAssignmentsByProfileId,
+      mergedCustomCategories = mergedCustomCategories,
     )
   }
 

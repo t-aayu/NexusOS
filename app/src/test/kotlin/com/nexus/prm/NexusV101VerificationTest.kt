@@ -498,4 +498,93 @@ class NexusV101VerificationTest {
     assertFalse(AutoBackupRunner.isScheduledBackupFileName("manual-backup.nxbk"))
     assertTrue(AutoBackupRunner.isScheduledBackupFileName("nexus-auto-20261127-140000-000.nxbk"))
   }
+
+  @Test
+  fun customCategories_createCaseInsensitiveReuseFilterRestartAndBackupRestore() = runTest {
+    val repoDir = tempFolder.newFolder("custom_cat_repo")
+    val repo = newRepo(repoDir)
+
+    val created = repo.addCustomCategory("Heritage Walk Group")
+    assertEquals("Heritage Walk Group", created)
+
+    // Trimming and case-insensitive reuse
+    val reused = repo.addCustomCategory("  heritage walk group  ")
+    assertEquals("Heritage Walk Group", reused)
+    assertEquals(listOf("Heritage Walk Group"), repo.customCategories.value)
+
+    // Built-in category label reuse
+    assertEquals("Faculty", repo.addCustomCategory(" faculty "))
+    assertEquals(listOf("Heritage Walk Group"), repo.customCategories.value)
+
+    val p1 = repo.saveProfile(
+      PersonProfile(
+        id = "c1",
+        name = "Walker One",
+        customCategory = "Heritage Walk Group",
+        createdAtEpochMs = 100L,
+        updatedAtEpochMs = 100L,
+      ),
+    )
+    val p2 = repo.saveProfile(
+      PersonProfile(
+        id = "c2",
+        name = "Walker Two",
+        customCategory = "  heritage walk group ",
+        createdAtEpochMs = 200L,
+        updatedAtEpochMs = 200L,
+      ),
+    )
+    repo.saveProfile(
+      PersonProfile(
+        id = "c3",
+        name = "Faculty Member",
+        category = PersonCategory.FACULTY,
+        createdAtEpochMs = 300L,
+        updatedAtEpochMs = 300L,
+      ),
+    )
+    assertEquals("Heritage Walk Group", p1.categoryLabel())
+    assertEquals("Heritage Walk Group", p2.categoryLabel())
+
+    // Filter People by custom category
+    val filtered = DirectorySearch.filterAndSort(
+      profiles = repo.profiles.value,
+      query = "",
+      selectedCategory = null,
+      selectedTrainingGroup = null,
+      favouritesOnly = false,
+      recentlyAddedOnly = false,
+      selectedCategoryLabel = "Heritage Walk Group",
+    )
+    assertEquals(listOf("c1", "c2"), filtered.map { it.id })
+
+    // Reopen from disk: custom categories survive restart
+    val reopened = newRepo(repoDir)
+    assertEquals(listOf("Heritage Walk Group"), reopened.customCategories.value)
+
+    // Backup & restore (full replacement and merge)
+    val backupBytes = reopened.exportBackup("CatPass123!")
+    val cleanTarget = newRepo()
+    val preview = cleanTarget.inspectBackup(backupBytes, "CatPass123!")
+    assertEquals(listOf("Heritage Walk Group"), preview.customCategories)
+    cleanTarget.applyBackup(preview)
+    assertEquals(listOf("Heritage Walk Group"), cleanTarget.customCategories.value)
+    assertEquals(
+      2,
+      DirectorySearch.filterAndSort(
+        cleanTarget.profiles.value,
+        "",
+        null,
+        null,
+        false,
+        false,
+        selectedCategoryLabel = "Heritage Walk Group",
+      ).size,
+    )
+
+    val mergeTarget = newRepo()
+    mergeTarget.addCustomCategory("Local Only Category")
+    mergeTarget.applyMergeRestore(mergeTarget.inspectBackup(backupBytes, "CatPass123!"))
+    assertEquals(listOf("Local Only Category", "Heritage Walk Group"), mergeTarget.customCategories.value)
+  }
 }

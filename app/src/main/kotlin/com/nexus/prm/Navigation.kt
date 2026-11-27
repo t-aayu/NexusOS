@@ -2,6 +2,11 @@ package com.nexus.prm
 
 import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.entryProvider
@@ -18,12 +23,23 @@ import com.nexus.prm.ui.settings.OwnerCardScreen
 import com.nexus.prm.ui.settings.SettingsScreen
 
 @Composable
-fun MainNavigation() {
+fun MainNavigation(quickCaptureToken: Int = 0) {
   val context = LocalContext.current
   val app = context.applicationContext as NexusApp
   val repository = app.directoryRepository
   val autoBackupManager = app.autoBackupManager
   val backStack = rememberNavBackStack(People)
+  var handledQuickCaptureToken by rememberSaveable { mutableIntStateOf(0) }
+
+  LaunchedEffect(quickCaptureToken) {
+    if (quickCaptureToken > handledQuickCaptureToken) {
+      handledQuickCaptureToken = quickCaptureToken
+      val top = backStack.lastOrNull()
+      if (top !is PersonEdit || top.profileId != null) {
+        backStack.add(PersonEdit(profileId = null, focusNameOnOpen = true))
+      }
+    }
+  }
 
   NavDisplay(
     backStack = backStack,
@@ -53,6 +69,7 @@ fun MainNavigation() {
       entry<PersonEdit> { key ->
         PersonEditScreen(
           profileId = key.profileId,
+          focusNameOnOpen = key.focusNameOnOpen,
           repository = repository,
           onBack = { backStack.removeLastOrNull() },
           onSaved = { savedId ->
