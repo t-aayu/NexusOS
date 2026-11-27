@@ -124,6 +124,7 @@ data class PersonProfile(
   val serviceBatch: String = "",
   val foundationCourseBatch: String = "",
   val trainingGroup: String = "",
+  val otherDetails: String = "",
   val tags: List<String> = emptyList(),
   val postings: List<PostingEntry> = emptyList(),
   val introductions: List<IntroductionRecord> = emptyList(),

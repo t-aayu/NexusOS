@@ -371,6 +371,7 @@ class LocalDirectoryRepository(
       serviceBatch = profile.serviceBatch.trim(),
       foundationCourseBatch = profile.foundationCourseBatch.trim(),
       trainingGroup = profile.trainingGroup.trim(),
+      otherDetails = profile.otherDetails.trim(),
       tags = DirectorySearch.normalizeTags(profile.tags, existingProfiles),
     )
   }

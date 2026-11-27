@@ -140,6 +140,7 @@ object RestoreMerger {
         serviceBatch = local.serviceBatch.ifBlank { incoming.serviceBatch },
         foundationCourseBatch = local.foundationCourseBatch.ifBlank { incoming.foundationCourseBatch },
         trainingGroup = local.trainingGroup.ifBlank { incoming.trainingGroup },
+        otherDetails = local.otherDetails.ifBlank { incoming.otherDetails },
         isFavourite = local.isFavourite,
         tags = DirectorySearch.normalizeTags(local.tags + incoming.tags, mergedById.values.toList()),
         postings = mergedPostings,

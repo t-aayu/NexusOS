@@ -10,14 +10,20 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -30,6 +36,7 @@ import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -60,11 +67,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -105,6 +117,7 @@ data class PersonEditDraft(
   val serviceBatch: String = "",
   val foundationCourseBatch: String = "",
   val trainingGroup: String = "",
+  val otherDetails: String = "",
   val existingPhotoFileName: String? = null,
   val pendingPhotoTempPath: String? = null,
   val removePhoto: Boolean = false,
@@ -131,6 +144,7 @@ data class PersonEditDraft(
       serviceBatch = existing.serviceBatch,
       foundationCourseBatch = existing.foundationCourseBatch,
       trainingGroup = existing.trainingGroup,
+      otherDetails = existing.otherDetails,
       existingPhotoFileName = existing.photoFileName,
       tags = existing.tags,
       moreDetailsExpanded = listOf(
@@ -198,6 +212,7 @@ fun PersonEditScreen(
 ) {
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
+  val focusManager = LocalFocusManager.current
   val keyboardController = LocalSoftwareKeyboardController.current
   val nameFocusRequester = remember { FocusRequester() }
   var hasFocusedName by rememberSaveable(profileId) { mutableStateOf(false) }
@@ -300,6 +315,7 @@ fun PersonEditScreen(
         serviceBatch = draft.serviceBatch,
         foundationCourseBatch = draft.foundationCourseBatch,
         trainingGroup = draft.trainingGroup,
+        otherDetails = draft.otherDetails,
         tags = draft.tags,
         photoFileName = if (draft.removePhoto) null else draft.existingPhotoFileName,
         isFavourite = base?.isFavourite ?: false,
@@ -355,7 +371,16 @@ fun PersonEditScreen(
           }
         },
         actions = {
-          TextButton(onClick = ::performSave, enabled = !isSaving && draft.isInitialized) {
+          Button(
+            onClick = ::performSave,
+            enabled = !isSaving && draft.isInitialized,
+            colors = ButtonDefaults.buttonColors(
+              containerColor = MaterialTheme.colorScheme.primary,
+              contentColor = MaterialTheme.colorScheme.onPrimary,
+            ),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+            modifier = Modifier.padding(end = 8.dp),
+          ) {
             Text("Save", fontWeight = FontWeight.SemiBold)
           }
         },
@@ -368,6 +393,8 @@ fun PersonEditScreen(
       modifier = Modifier
         .fillMaxSize()
         .padding(innerPadding)
+        .consumeWindowInsets(innerPadding)
+        .imePadding()
         .verticalScroll(rememberScrollState())
         .padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -416,10 +443,15 @@ fun PersonEditScreen(
         isError = nameError != null,
         supportingText = nameError?.let { msg -> { Text(msg) } },
         singleLine = true,
-        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+        keyboardOptions = KeyboardOptions(
+          capitalization = KeyboardCapitalization.Words,
+          imeAction = ImeAction.Next,
+        ),
+        keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
         modifier = Modifier
           .fillMaxWidth()
-          .focusRequester(nameFocusRequester),
+          .focusRequester(nameFocusRequester)
+          .bringIntoViewOnFocus(),
       )
 
       OutlinedTextField(
@@ -427,8 +459,14 @@ fun PersonEditScreen(
         onValueChange = { draft = draft.copy(phone = it) },
         label = { Text("Phone") },
         singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-        modifier = Modifier.fillMaxWidth(),
+        keyboardOptions = KeyboardOptions(
+          keyboardType = KeyboardType.Phone,
+          imeAction = ImeAction.Next,
+        ),
+        keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+        modifier = Modifier
+          .fillMaxWidth()
+          .bringIntoViewOnFocus(),
       )
 
       val trimmedCategoryQuery = draft.categoryQuery.trim()
@@ -541,7 +579,9 @@ fun PersonEditScreen(
         minLines = 2,
         maxLines = 4,
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+          .fillMaxWidth()
+          .bringIntoViewOnFocus(),
       )
 
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -560,7 +600,11 @@ fun PersonEditScreen(
             onValueChange = { draft = draft.copy(tagInput = it) },
             label = { Text("Add tag") },
             singleLine = true,
-            modifier = Modifier.weight(1f),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+            modifier = Modifier
+              .weight(1f)
+              .bringIntoViewOnFocus(),
           )
           OutlinedButton(
             onClick = {
@@ -634,70 +678,93 @@ fun PersonEditScreen(
 
       AnimatedVisibility(visible = draft.moreDetailsExpanded) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          val nextFocusAction = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) })
           OutlinedTextField(
             value = draft.email,
             onValueChange = { draft = draft.copy(email = it) },
             label = { Text("Email") },
             singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+            keyboardActions = nextFocusAction,
+            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
           )
           OutlinedTextField(
             value = draft.organisation,
             onValueChange = { draft = draft.copy(organisation = it) },
             label = { Text("Organisation") },
             singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
+            keyboardActions = nextFocusAction,
+            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
           )
           OutlinedTextField(
             value = draft.designation,
             onValueChange = { draft = draft.copy(designation = it) },
             label = { Text("Designation") },
             singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
+            keyboardActions = nextFocusAction,
+            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
           )
           OutlinedTextField(
             value = draft.service,
             onValueChange = { draft = draft.copy(service = it) },
             label = { Text("Service") },
             singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Next),
+            keyboardActions = nextFocusAction,
+            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
           )
           OutlinedTextField(
             value = draft.cadre,
             onValueChange = { draft = draft.copy(cadre = it) },
             label = { Text("Cadre") },
             singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
+            keyboardActions = nextFocusAction,
+            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
           )
           OutlinedTextField(
             value = draft.serviceBatch,
             onValueChange = { draft = draft.copy(serviceBatch = it) },
             label = { Text("Service batch") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            keyboardActions = nextFocusAction,
+            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
           )
           OutlinedTextField(
             value = draft.foundationCourseBatch,
             onValueChange = { draft = draft.copy(foundationCourseBatch = it) },
             label = { Text("Foundation Course batch") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            keyboardActions = nextFocusAction,
+            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
           )
           OutlinedTextField(
             value = draft.trainingGroup,
             onValueChange = { draft = draft.copy(trainingGroup = it) },
             label = { Text("Training group") },
             singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
+            keyboardActions = nextFocusAction,
+            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
           )
         }
       }
+
+      OutlinedTextField(
+        value = draft.otherDetails,
+        onValueChange = { draft = draft.copy(otherDetails = it) },
+        label = { Text("Other details") },
+        minLines = 3,
+        maxLines = 6,
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+        modifier = Modifier
+          .fillMaxWidth()
+          .bringIntoViewOnFocus(),
+      )
 
       Spacer(modifier = Modifier.height(8.dp))
       Button(
@@ -707,7 +774,7 @@ fun PersonEditScreen(
       ) {
         Text(if (profileId == null) "Save person" else "Save changes")
       }
-      Spacer(modifier = Modifier.height(16.dp))
+      Spacer(modifier = Modifier.height(24.dp))
     }
   }
 
@@ -761,4 +828,18 @@ fun PersonEditScreen(
       },
     )
   }
+}
+
+private fun Modifier.bringIntoViewOnFocus(): Modifier = composed {
+  val bringIntoViewRequester = remember { BringIntoViewRequester() }
+  val scope = rememberCoroutineScope()
+  this
+    .bringIntoViewRequester(bringIntoViewRequester)
+    .onFocusEvent { focusState ->
+      if (focusState.isFocused) {
+        scope.launch {
+          bringIntoViewRequester.bringIntoView()
+        }
+      }
+    }
 }

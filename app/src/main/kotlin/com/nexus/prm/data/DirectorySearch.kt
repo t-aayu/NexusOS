@@ -30,6 +30,7 @@ object DirectorySearch {
       add(profile.organisation)
       add(profile.trainingGroup)
       add(profile.whereWeMet)
+      add(profile.otherDetails)
       add(profile.categoryLabel().orEmpty())
       addAll(profile.tags)
       addAll(groupNames)

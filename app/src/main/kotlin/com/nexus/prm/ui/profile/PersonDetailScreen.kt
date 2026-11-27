@@ -267,6 +267,13 @@ fun PersonDetailScreen(
         DetailSectionCard(title = "More details", rows = moreDetails)
       }
 
+      if (profile.otherDetails.isNotBlank()) {
+        DetailSectionCard(
+          title = "Other details",
+          rows = listOf("Notes" to profile.otherDetails),
+        )
+      }
+
       // Posting and role history
       Card(
         modifier = Modifier.fillMaxWidth(),

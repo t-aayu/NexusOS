@@ -1,6 +1,7 @@
 package com.nexus.prm
 
 import com.nexus.prm.data.AutoBackupRunner
+import com.nexus.prm.data.BackupCrypto
 import com.nexus.prm.data.BackupDestination
 import com.nexus.prm.data.DirectorySearch
 import com.nexus.prm.data.FixedBackupLocation
@@ -586,5 +587,86 @@ class NexusV101VerificationTest {
     mergeTarget.addCustomCategory("Local Only Category")
     mergeTarget.applyMergeRestore(mergeTarget.inspectBackup(backupBytes, "CatPass123!"))
     assertEquals(listOf("Local Only Category", "Heritage Walk Group"), mergeTarget.customCategories.value)
+  }
+
+  @Test
+  fun otherDetails_persistsMultilineTextSurvivesDraftAndMergesWithOlderBackups() = runTest {
+    val repo = newRepo()
+    val multilineOther = "Line 1: Speaks fluent Tamil\nLine 2: Prefers morning calls"
+    val saved = repo.saveProfile(
+      PersonProfile(
+        id = "od-1",
+        name = "Meera Notes",
+        whereWeMet = "LBSNAA Mess",
+        otherDetails = multilineOther,
+        createdAtEpochMs = 100L,
+        updatedAtEpochMs = 100L,
+      ),
+    )
+    assertEquals("LBSNAA Mess", saved.whereWeMet)
+    assertEquals(multilineOther, saved.otherDetails)
+
+    // Draft round-trip preserves otherDetails
+    val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    val draft = PersonEditDraft.initialFor(saved.id).applySavedProfile(saved).copy(
+      otherDetails = "Updated line 1\nUpdated line 2",
+    )
+    val restoredDraft = json.decodeFromString<PersonEditDraft>(json.encodeToString(draft))
+    assertEquals("Updated line 1\nUpdated line 2", restoredDraft.otherDetails)
+
+    // Older backup without otherDetails defaults to empty
+    val olderJson = """
+      {
+        "schemaVersion": 3,
+        "createdAtEpochMs": 1000,
+        "profiles": [
+          {
+            "id": "od-2",
+            "name": "Older Backup Person",
+            "createdAtEpochMs": 1000,
+            "updatedAtEpochMs": 1000
+          }
+        ]
+      }
+    """.trimIndent()
+    val olderZip = java.io.ByteArrayOutputStream().use { baos ->
+      java.util.zip.ZipOutputStream(baos).use { zip ->
+        zip.putNextEntry(java.util.zip.ZipEntry("manifest.json"))
+        zip.write(olderJson.encodeToByteArray())
+        zip.closeEntry()
+      }
+      baos.toByteArray()
+    }
+    val olderBackup = BackupCrypto.encrypt(olderZip, "OldPass!")
+    val olderPreview = repo.inspectBackup(olderBackup, "OldPass!")
+    assertEquals("", olderPreview.profiles.single().otherDetails)
+
+    // Merge keeps nonblank local otherDetails and fills blank local otherDetails from backup
+    val backupWithOther = repo.exportBackup("NewPass!")
+    val mergeTarget = newRepo()
+    mergeTarget.saveProfile(
+      PersonProfile(
+        id = "od-1",
+        name = "Meera Notes",
+        otherDetails = "Keep my local note",
+        createdAtEpochMs = 50L,
+        updatedAtEpochMs = 50L,
+      ),
+    )
+    mergeTarget.applyMergeRestore(mergeTarget.inspectBackup(backupWithOther, "NewPass!"))
+    assertEquals("Keep my local note", mergeTarget.getProfile("od-1")!!.otherDetails)
+
+    val emptyLocalTarget = newRepo()
+    emptyLocalTarget.saveProfile(
+      PersonProfile(
+        id = "od-1",
+        name = "Meera Notes",
+        otherDetails = "",
+        createdAtEpochMs = 50L,
+        updatedAtEpochMs = 50L,
+      ),
+    )
+    emptyLocalTarget.applyMergeRestore(emptyLocalTarget.inspectBackup(backupWithOther, "NewPass!"))
+    assertEquals(multilineOther, emptyLocalTarget.getProfile("od-1")!!.otherDetails)
   }
 }
