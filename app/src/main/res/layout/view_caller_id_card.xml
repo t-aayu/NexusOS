@@ -2,12 +2,11 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginHorizontal="16dp"
     android:background="@drawable/caller_id_card_bg"
     android:elevation="8dp"
     android:orientation="vertical"
-    android:paddingHorizontal="16dp"
-    android:paddingVertical="12dp">
+    android:paddingHorizontal="14dp"
+    android:paddingVertical="10dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -27,10 +26,10 @@
 
         <TextView
             android:id="@+id/caller_id_dismiss"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
-            android:gravity="center"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
             android:contentDescription="Dismiss caller card"
+            android:gravity="center"
             android:text="✕"
             android:textColor="#E8EEF7"
             android:textSize="14sp"
@@ -41,9 +40,9 @@
         android:id="@+id/caller_id_name"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
+        android:layout_marginTop="1dp"
         android:ellipsize="end"
-        android:maxLines="1"
+        android:maxLines="2"
         android:textColor="#E8EEF7"
         android:textSize="17sp"
         android:textStyle="bold" />
@@ -54,7 +53,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
         android:ellipsize="end"
-        android:maxLines="2"
+        android:maxLines="3"
         android:textColor="#C4D2E3"
         android:textSize="13sp" />
 </LinearLayout>

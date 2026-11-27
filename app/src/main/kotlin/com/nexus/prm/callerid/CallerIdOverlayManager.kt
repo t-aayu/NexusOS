@@ -16,6 +16,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.TextView
 import androidx.compose.ui.graphics.toArgb
@@ -24,9 +25,24 @@ import androidx.core.graphics.ColorUtils
 import com.nexus.prm.MainActivity
 import com.nexus.prm.R
 import com.nexus.prm.data.PersonProfile
-import com.nexus.prm.ui.theme.ThemePreferences
+import com.nexus.prm.ui.theme.AccentChoice
+import com.nexus.prm.ui.theme.ThemeMode
 import com.nexus.prm.ui.theme.resolveNexusColorScheme
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.roundToInt
+
+private const val CARD_HORIZONTAL_MARGIN_DP = 20f
+private const val CARD_MAX_WIDTH_DP = 420f
+private const val CARD_SURFACE_ALPHA = 0xFA
+
+internal fun computeCallerCardWidthPx(usableWidthPx: Int, density: Float): Int {
+  val marginPx = (CARD_HORIZONTAL_MARGIN_DP * density).roundToInt()
+  val maxWidthPx = (CARD_MAX_WIDTH_DP * density).roundToInt()
+  return minOf((usableWidthPx - 2 * marginPx).coerceAtLeast(0), maxWidthPx)
+}
+
+internal fun systemCallerCardThemeMode(systemDark: Boolean): ThemeMode =
+  if (systemDark) ThemeMode.DARK else ThemeMode.LIGHT
 
 object CallerIdOverlayManager {
   private const val CHANNEL_ID = "nexus_caller_id"
@@ -110,21 +126,21 @@ object CallerIdOverlayManager {
     return runCatching {
       val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
       val root = LayoutInflater.from(context).inflate(R.layout.view_caller_id_card, null)
+      val density = context.resources.displayMetrics.density
 
       val systemDark = (
         context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
         ) == Configuration.UI_MODE_NIGHT_YES
-      val settings = ThemePreferences.currentSettings(context)
       val scheme = resolveNexusColorScheme(
         context = context,
-        themeMode = settings.themeMode,
-        accentChoice = settings.accentChoice,
+        themeMode = systemCallerCardThemeMode(systemDark),
+        accentChoice = AccentChoice.SLATE_BLUE,
         systemDark = systemDark,
       )
       (root.background as? GradientDrawable)?.apply {
-        setColor(ColorUtils.setAlphaComponent(scheme.surfaceContainerLow.toArgb(), 0xEB))
-        val strokePx = (1f * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
-        setStroke(strokePx, ColorUtils.setAlphaComponent(scheme.primary.toArgb(), 0x66))
+        setColor(ColorUtils.setAlphaComponent(scheme.surfaceContainerLow.toArgb(), CARD_SURFACE_ALPHA))
+        val strokePx = (1f * density).toInt().coerceAtLeast(1)
+        setStroke(strokePx, ColorUtils.setAlphaComponent(scheme.outlineVariant.toArgb(), 0xCC))
       }
       root.findViewById<TextView>(R.id.caller_id_brand)?.setTextColor(scheme.primary.toArgb())
       root.findViewById<TextView>(R.id.caller_id_name).apply {
@@ -159,15 +175,34 @@ object CallerIdOverlayManager {
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
         WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
 
+      val baseTopPx = (48f * density).roundToInt()
+      val usableWidthPx: Int
+      val topOffsetPx: Int
+      val horizontalOffsetPx: Int
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val metrics = wm.currentWindowMetrics
+        val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
+          WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
+        )
+        usableWidthPx = (metrics.bounds.width() - insets.left - insets.right).coerceAtLeast(0)
+        topOffsetPx = maxOf(baseTopPx, insets.top + (8f * density).roundToInt())
+        horizontalOffsetPx = (insets.left - insets.right) / 2
+      } else {
+        usableWidthPx = context.resources.displayMetrics.widthPixels
+        topOffsetPx = baseTopPx
+        horizontalOffsetPx = 0
+      }
+
       val params = WindowManager.LayoutParams(
-        WindowManager.LayoutParams.MATCH_PARENT,
+        computeCallerCardWidthPx(usableWidthPx, density),
         WindowManager.LayoutParams.WRAP_CONTENT,
         windowType,
         flags,
         PixelFormat.TRANSLUCENT,
       ).apply {
         gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        y = (48 * context.resources.displayMetrics.density).toInt()
+        x = horizontalOffsetPx
+        y = topOffsetPx
       }
 
       wm.addView(root, params)
