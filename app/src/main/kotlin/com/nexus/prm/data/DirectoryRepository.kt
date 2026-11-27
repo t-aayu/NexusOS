@@ -1,8 +1,14 @@
 package com.nexus.prm.data
 
+import android.annotation.SuppressLint
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -95,6 +101,7 @@ class LocalDirectoryRepository(
   private val directoryFile = File(filesDir, "nexus_directory.enc")
   private val photosDir = File(filesDir, "photos")
   internal var beforeSnapshotPersistHook: (() -> Unit)? = null
+  internal var afterSnapshotWriteHook: (() -> Unit)? = null
 
   private data class ExportSnapshot(
     val profiles: List<PersonProfile>,
@@ -580,18 +587,25 @@ class LocalDirectoryRepository(
       )
 
       val stagedByIncomingName = linkedMapOf<String, String>()
+      val stagedByProfileId = linkedMapOf<String, String>()
       val stagedFiles = mutableListOf<String>()
       try {
-        for ((incomingPhotoName, bytes) in outcome.photosToWrite) {
-          val generated = "${UUID.randomUUID()}.jpg"
-          writeEncryptedPhoto(generated, bytes)
-          stagedFiles += generated
-          stagedByIncomingName[incomingPhotoName] = generated
+        for ((profileId, incomingPhotoName) in outcome.photoAssignmentsByProfileId) {
+          val stagedName = stagedByIncomingName[incomingPhotoName] ?: run {
+            val bytes = outcome.photosToWrite[incomingPhotoName]
+              ?: throw IllegalStateException("Missing staged photo bytes for $incomingPhotoName")
+            val generated = "${UUID.randomUUID()}.jpg"
+            writeEncryptedPhoto(generated, bytes)
+            stagedFiles += generated
+            stagedByIncomingName[incomingPhotoName] = generated
+            generated
+          }
+          stagedByProfileId[profileId] = stagedName
         }
 
         val candidateProfiles = outcome.mergedProfiles.map { profile ->
-          val mapped = profile.photoFileName?.let { stagedByIncomingName[it] }
-          if (mapped != null) profile.copy(photoFileName = mapped) else profile
+          val assigned = stagedByProfileId[profile.id]
+          if (assigned != null) profile.copy(photoFileName = assigned) else profile
         }
 
         persistSnapshot(candidateProfiles, outcome.mergedGroups, outcome.mergedOwnerCard)
@@ -623,11 +637,12 @@ class LocalDirectoryRepository(
     )
     val encrypted = crypto.encrypt(json.encodeToString(snapshot).encodeToByteArray())
     val tmpFile = File(filesDir, "nexus_directory.enc.tmp")
-    tmpFile.writeBytes(encrypted)
-    if (!tmpFile.renameTo(directoryFile)) {
-      directoryFile.writeBytes(encrypted)
-      tmpFile.delete()
-    }
+    atomicWriteFile(
+      target = directoryFile,
+      tmp = tmpFile,
+      bytes = encrypted,
+      afterWriteHook = afterSnapshotWriteHook,
+    )
   }
 
   private fun writeEncryptedPhoto(photoFileName: String, bytes: ByteArray) {
@@ -635,10 +650,48 @@ class LocalDirectoryRepository(
     val target = safePhotoFile(photoFileName)
       ?: throw IllegalArgumentException("Invalid photo file name")
     val tmp = File(photosDir, "$photoFileName.tmp")
-    tmp.writeBytes(crypto.encrypt(bytes))
-    if (!tmp.renameTo(target)) {
-      target.writeBytes(crypto.encrypt(bytes))
-      tmp.delete()
+    atomicWriteFile(target = target, tmp = tmp, bytes = crypto.encrypt(bytes))
+  }
+
+  private fun atomicWriteFile(
+    target: File,
+    tmp: File,
+    bytes: ByteArray,
+    afterWriteHook: (() -> Unit)? = null,
+  ) {
+    try {
+      FileOutputStream(tmp).use { out ->
+        out.write(bytes)
+        out.flush()
+        out.fd.sync()
+      }
+      afterWriteHook?.invoke()
+      if (!tmp.renameTo(target)) {
+        moveReplaceAtomic(tmp, target)
+      }
+    } catch (t: Throwable) {
+      runCatching { tmp.delete() }
+      throw t
+    }
+  }
+
+  @SuppressLint("NewApi")
+  private fun moveReplaceAtomic(source: File, target: File) {
+    try {
+      Files.move(
+        source.toPath(),
+        target.toPath(),
+        StandardCopyOption.REPLACE_EXISTING,
+        StandardCopyOption.ATOMIC_MOVE,
+      )
+    } catch (_: AtomicMoveNotSupportedException) {
+      Files.move(
+        source.toPath(),
+        target.toPath(),
+        StandardCopyOption.REPLACE_EXISTING,
+      )
+    } catch (e: Exception) {
+      throw IOException("Failed to atomically commit ${target.name}", e)
     }
   }
 

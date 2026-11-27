@@ -24,6 +24,7 @@ data class MergeOutcome(
   val mergedGroups: List<ContactGroup>,
   val mergedOwnerCard: OwnerCard,
   val photosToWrite: Map<String, ByteArray>,
+  val photoAssignmentsByProfileId: Map<String, String> = emptyMap(),
 )
 
 object RestoreMerger {
@@ -82,6 +83,7 @@ object RestoreMerger {
     val preview = buildPreview(localProfiles, backupPreview)
     val mergedById = linkedMapOf<String, PersonProfile>()
     val photosToWrite = linkedMapOf<String, ByteArray>()
+    val photoAssignmentsByProfileId = linkedMapOf<String, String>()
     val includedIncomingIds = mutableSetOf<String>()
 
     for (local in localProfiles) {
@@ -100,6 +102,7 @@ object RestoreMerger {
           val bytes = backupPreview.photos[incoming.photoFileName]
           if (bytes != null && bytes.isNotEmpty()) {
             photosToWrite[incoming.photoFileName] = bytes
+            photoAssignmentsByProfileId[local.id] = incoming.photoFileName
             incoming.photoFileName
           } else {
             null
@@ -156,6 +159,7 @@ object RestoreMerger {
         val bytes = backupPreview.photos[name]
         if (bytes != null && bytes.isNotEmpty()) {
           photosToWrite[name] = bytes
+          photoAssignmentsByProfileId[incoming.id] = name
           true
         } else {
           false
@@ -207,6 +211,7 @@ object RestoreMerger {
       mergedGroups = mergedGroups,
       mergedOwnerCard = mergedOwnerCard,
       photosToWrite = photosToWrite,
+      photoAssignmentsByProfileId = photoAssignmentsByProfileId,
     )
   }
 

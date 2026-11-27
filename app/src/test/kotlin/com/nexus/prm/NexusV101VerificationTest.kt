@@ -111,7 +111,7 @@ class NexusV101VerificationTest {
       photos = mapOf(overlappingName to incomingPhotoBytes),
     )
 
-    // 1. Inject commit failure during merge restore
+    // 1. Inject pre-commit failure during merge restore
     targetRepo.beforeSnapshotPersistHook = { throw IOException("Simulated disk full") }
     var mergeFailed = false
     try {
@@ -121,7 +121,17 @@ class NexusV101VerificationTest {
     }
     assertTrue(mergeFailed)
 
-    // 2. Inject commit failure during full replacement
+    // 2. Inject failure AFTER writing candidate snapshot has begun and BEFORE commit completes
+    targetRepo.beforeSnapshotPersistHook = null
+    targetRepo.afterSnapshotWriteHook = { throw IOException("Simulated mid-commit crash") }
+    var midCommitMergeFailed = false
+    try {
+      targetRepo.applyMergeRestore(overlappingPreview)
+    } catch (_: IOException) {
+      midCommitMergeFailed = true
+    }
+    assertTrue(midCommitMergeFailed)
+
     var replaceFailed = false
     try {
       targetRepo.applyBackup(overlappingPreview)
@@ -129,7 +139,8 @@ class NexusV101VerificationTest {
       replaceFailed = true
     }
     assertTrue(replaceFailed)
-    targetRepo.beforeSnapshotPersistHook = null
+    targetRepo.afterSnapshotWriteHook = null
+    assertFalse(File(targetDir, "nexus_directory.enc.tmp").exists())
 
     // Reopen repository from disk and verify records + live photo contents are intact
     val reopened = LocalDirectoryRepository(filesDir = targetDir, crypto = passthroughCrypto)
@@ -138,18 +149,29 @@ class NexusV101VerificationTest {
     assertArrayEquals(livePhotoBytes, reopened.loadPhotoBytes(overlappingName))
     assertEquals(1, File(targetDir, "photos").listFiles()?.size)
 
-    // 3. Exercise successful merge (retains local + adds incoming with its own staged photo)
+    // 3. Exercise successful merge: local profile keeps original photo, incoming gets backup photo
     reopened.applyMergeRestore(overlappingPreview)
-    assertEquals(2, reopened.profiles.value.size)
-    assertArrayEquals(livePhotoBytes, reopened.loadPhotoBytes(overlappingName))
-    val mergedIncoming = reopened.getProfile("incoming-1")!!
-    assertArrayEquals(incomingPhotoBytes, reopened.loadPhotoBytes(mergedIncoming.photoFileName!!))
+    val reopenedAfterMerge = LocalDirectoryRepository(filesDir = targetDir, crypto = passthroughCrypto)
+    assertEquals(2, reopenedAfterMerge.profiles.value.size)
+    val localAfterMerge = reopenedAfterMerge.getProfile("local-1")!!
+    val incomingAfterMerge = reopenedAfterMerge.getProfile("incoming-1")!!
+    assertEquals(overlappingName, localAfterMerge.photoFileName)
+    assertArrayEquals(livePhotoBytes, reopenedAfterMerge.loadPhotoBytes(localAfterMerge.photoFileName!!))
+    assertArrayEquals(incomingPhotoBytes, reopenedAfterMerge.loadPhotoBytes(incomingAfterMerge.photoFileName!!))
+
+    // Repeating the merge keeps both photo references and bytes stable
+    reopenedAfterMerge.applyMergeRestore(overlappingPreview)
+    val reopenedAfterRepeat = LocalDirectoryRepository(filesDir = targetDir, crypto = passthroughCrypto)
+    assertEquals(localAfterMerge.photoFileName, reopenedAfterRepeat.getProfile("local-1")!!.photoFileName)
+    assertEquals(incomingAfterMerge.photoFileName, reopenedAfterRepeat.getProfile("incoming-1")!!.photoFileName)
+    assertArrayEquals(livePhotoBytes, reopenedAfterRepeat.loadPhotoBytes(localAfterMerge.photoFileName!!))
+    assertArrayEquals(incomingPhotoBytes, reopenedAfterRepeat.loadPhotoBytes(incomingAfterMerge.photoFileName!!))
 
     // 4. Exercise deliberate full replacement
-    reopened.applyBackup(overlappingPreview)
-    assertEquals(1, reopened.profiles.value.size)
-    assertEquals("Incoming Person", reopened.profiles.value.single().name)
-    assertArrayEquals(incomingPhotoBytes, reopened.loadPhotoBytes(reopened.profiles.value.single().photoFileName!!))
+    reopenedAfterRepeat.applyBackup(overlappingPreview)
+    assertEquals(1, reopenedAfterRepeat.profiles.value.size)
+    assertEquals("Incoming Person", reopenedAfterRepeat.profiles.value.single().name)
+    assertArrayEquals(incomingPhotoBytes, reopenedAfterRepeat.loadPhotoBytes(reopenedAfterRepeat.profiles.value.single().photoFileName!!))
   }
 
   @Test
@@ -158,26 +180,37 @@ class NexusV101VerificationTest {
     repo.saveProfile(PersonProfile(id = "1", name = "Aditi Test", createdAtEpochMs = 100L, updatedAtEpochMs = 100L))
 
     val destDir = tempFolder.newFolder("nx101_03_dest")
-    val stagingDir = tempFolder.newFolder("nx101_03_stage")
     val manualFile = File(destDir, "manual-backup.nxbk").apply { writeText("manual") }
     val unrelatedFile = File(destDir, "notes.txt").apply { writeText("unrelated") }
 
     val destination = object : BackupDestination {
-      var failPublish = false
+      var failWrite = false
+      var corruptVerification = false
+      var failRename = false
+      var sawFinalFileDuringWrite = false
+
       override fun isAccessible(): Boolean = true
       override fun listScheduledFiles(): List<ScheduledBackupFile> =
         (destDir.listFiles() ?: emptyArray())
           .filter { it.isFile && AutoBackupRunner.isScheduledBackupFileName(it.name) }
           .map { ScheduledBackupFile(it.name) }
 
-      override fun writeAndReadBack(fileName: String, bytes: ByteArray): ByteArray {
-        val target = File(destDir, fileName)
-        if (failPublish) {
-          target.writeBytes(byteArrayOf(1, 2, 3)) // simulate partial write before failure
-          throw IOException("Simulated destination publish failure")
+      override fun writeStagingAndReadBack(stagingName: String, bytes: ByteArray): ByteArray {
+        assertFalse(AutoBackupRunner.isScheduledBackupFileName(stagingName))
+        val target = File(destDir, stagingName)
+        if (failWrite) {
+          target.writeBytes(byteArrayOf(1, 2, 3))
+          if (listScheduledFiles().size > 7) sawFinalFileDuringWrite = true
+          throw IOException("Simulated destination write failure")
         }
         target.writeBytes(bytes)
-        return target.readBytes()
+        return if (corruptVerification) byteArrayOf(9, 8, 7) else target.readBytes()
+      }
+
+      override fun promoteStagingToFinal(stagingName: String, finalName: String): Boolean {
+        if (failRename) return false
+        val staged = File(destDir, stagingName)
+        return staged.exists() && staged.renameTo(File(destDir, finalName))
       }
 
       override fun deleteFile(fileName: String): Boolean = File(destDir, fileName).delete()
@@ -192,7 +225,6 @@ class NexusV101VerificationTest {
         password = "AutoPass123",
         retentionCount = 7,
         nowEpochMs = 1_700_000_000_000L + i * 1000L,
-        stagingDir = stagingDir,
       )
       assertTrue(res.isSuccess)
       lastCreated = res.getOrThrow()
@@ -202,21 +234,35 @@ class NexusV101VerificationTest {
     assertTrue(destination.listScheduledFiles().any { it.name == lastCreated })
     assertTrue(manualFile.exists())
     assertTrue(unrelatedFile.exists())
-    assertEquals(0, stagingDir.listFiles()?.size ?: 0)
 
-    // Simulate failed publication: incomplete file is cleaned up and all 7 prior backups remain
-    destination.failPublish = true
-    val failed = runner.execute(
-      repository = repo,
-      destination = destination,
-      password = "AutoPass123",
-      retentionCount = 7,
-      nowEpochMs = 1_700_000_099_000L,
-      stagingDir = stagingDir,
+    // 1. Failure during write: staging cleaned up, no final .nxbk added, 7 prior backups remain
+    destination.failWrite = true
+    assertTrue(
+      runner.execute(repo, destination, "AutoPass123", 7, 1_700_000_099_000L).isFailure,
     )
-    assertTrue(failed.isFailure)
+    assertFalse(destination.sawFinalFileDuringWrite)
     assertEquals(7, destination.listScheduledFiles().size)
-    assertEquals(0, stagingDir.listFiles()?.size ?: 0)
+    assertTrue(destDir.listFiles()?.none { it.name.startsWith(AutoBackupRunner.STAGING_FILE_PREFIX) } == true)
+    destination.failWrite = false
+
+    // 2. Failure during destination verification: staging cleaned up, no final .nxbk added
+    destination.corruptVerification = true
+    assertTrue(
+      runner.execute(repo, destination, "AutoPass123", 7, 1_700_000_100_000L).isFailure,
+    )
+    assertEquals(7, destination.listScheduledFiles().size)
+    assertTrue(destDir.listFiles()?.none { it.name.startsWith(AutoBackupRunner.STAGING_FILE_PREFIX) } == true)
+    destination.corruptVerification = false
+
+    // 3. Failure during rename/promotion: staging cleaned up, no fallback write, 7 prior backups remain
+    destination.failRename = true
+    assertTrue(
+      runner.execute(repo, destination, "AutoPass123", 7, 1_700_000_101_000L).isFailure,
+    )
+    assertEquals(7, destination.listScheduledFiles().size)
+    assertTrue(destDir.listFiles()?.none { it.name.startsWith(AutoBackupRunner.STAGING_FILE_PREFIX) } == true)
+    assertTrue(manualFile.exists())
+    assertTrue(unrelatedFile.exists())
   }
 
   @Test

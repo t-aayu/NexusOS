@@ -49,11 +49,18 @@ class Phase3VerificationTest {
         ?.map { ScheduledBackupFile(it.name) }
         .orEmpty()
 
-    override fun writeAndReadBack(fileName: String, bytes: ByteArray): ByteArray {
+    override fun writeStagingAndReadBack(stagingName: String, bytes: ByteArray): ByteArray {
       if (!accessible) error("Destination unavailable")
-      val target = File(dir, fileName)
+      val target = File(dir, stagingName)
       target.writeBytes(bytes)
       return target.readBytes()
+    }
+
+    override fun promoteStagingToFinal(stagingName: String, finalName: String): Boolean {
+      if (!accessible) return false
+      val staged = File(dir, stagingName)
+      if (!staged.exists()) return false
+      return staged.renameTo(File(dir, finalName))
     }
 
     override fun deleteFile(fileName: String): Boolean =
