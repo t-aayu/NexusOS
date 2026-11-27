@@ -158,7 +158,19 @@ class LocalDirectoryRepository(
     if (!directoryFile.exists()) return DirectorySnapshot()
     val encrypted = directoryFile.readBytes()
     val decrypted = crypto.decrypt(encrypted)
-    return json.decodeFromString<DirectorySnapshot>(decrypted.decodeToString())
+    val raw = json.decodeFromString<DirectorySnapshot>(decrypted.decodeToString())
+    val migratedProfiles = raw.profiles.map { it.migrateLegacyTrainingFieldsToOtherDetails() }
+    if (migratedProfiles != raw.profiles) {
+      runCatching {
+        persistSnapshot(
+          profiles = migratedProfiles,
+          groups = raw.groups,
+          ownerCard = raw.ownerCard,
+          customCategories = raw.customCategories,
+        )
+      }
+    }
+    return raw.copy(profiles = migratedProfiles)
   }
 
   override suspend fun addCustomCategory(label: String): String = withContext(ioDispatcher) {
@@ -381,26 +393,27 @@ class LocalDirectoryRepository(
         _customCategories.value.firstOrNull { it.equals(raw, ignoreCase = true) } ?: raw
       }
     }
-    val normalizedPhones = profile.resolvedPhones()
-    val normalizedEmails = profile.resolvedEmails()
-    return profile.copy(
+    val migrated = profile.migrateLegacyTrainingFieldsToOtherDetails()
+    val normalizedPhones = migrated.resolvedPhones()
+    val normalizedEmails = migrated.resolvedEmails()
+    return migrated.copy(
       name = trimmedName,
       phone = normalizedPhones.firstOrNull { it.isPrimary }?.value.orEmpty(),
       phones = normalizedPhones,
       category = matchedBuiltIn,
       customCategory = canonicalCustom,
-      whereWeMet = profile.whereWeMet.trim(),
+      whereWeMet = migrated.whereWeMet.trim(),
       email = normalizedEmails.firstOrNull { it.isPrimary }?.value.orEmpty(),
       emails = normalizedEmails,
-      organisation = profile.organisation.trim(),
-      designation = profile.designation.trim(),
-      service = profile.service.trim(),
-      cadre = profile.cadre.trim(),
-      serviceBatch = profile.serviceBatch.trim(),
-      foundationCourseBatch = profile.foundationCourseBatch.trim(),
-      trainingGroup = profile.trainingGroup.trim(),
-      otherDetails = profile.otherDetails.trim(),
-      tags = DirectorySearch.normalizeTags(profile.tags, existingProfiles),
+      organisation = migrated.organisation.trim(),
+      designation = migrated.designation.trim(),
+      service = migrated.service.trim(),
+      cadre = migrated.cadre.trim(),
+      serviceBatch = migrated.serviceBatch.trim(),
+      foundationCourseBatch = "",
+      trainingGroup = "",
+      otherDetails = migrated.otherDetails.trim(),
+      tags = DirectorySearch.normalizeTags(migrated.tags, existingProfiles),
     )
   }
 
@@ -637,7 +650,7 @@ class LocalDirectoryRepository(
       }
 
       BackupPreview(
-        profiles = manifest.profiles.map { it.withSyncedPostings() },
+        profiles = manifest.profiles.map { it.migrateLegacyTrainingFieldsToOtherDetails().withSyncedPostings() },
         groups = sanitizedGroups,
         ownerCard = manifest.ownerCard,
         photos = photos,

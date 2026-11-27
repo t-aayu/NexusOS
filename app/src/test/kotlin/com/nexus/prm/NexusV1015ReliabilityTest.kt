@@ -134,4 +134,22 @@ class NexusV1015ReliabilityTest {
     // Existing profile remains intact
     assertEquals(listOf(existing.id), repo.profiles.value.map { it.id })
   }
+
+  @Test
+  fun legacyTrainingFields_migrateIntoOtherDetails() {
+    val legacy = PersonProfile(
+      id = "p-legacy",
+      name = "Legacy Officer",
+      foundationCourseBatch = "99th FC",
+      trainingGroup = "Alpha",
+      otherDetails = "Met at LBSNAA",
+    )
+    val migrated = legacy.migrateLegacyTrainingFieldsToOtherDetails()
+    assertEquals("", migrated.foundationCourseBatch)
+    assertEquals("", migrated.trainingGroup)
+    assertEquals(
+      "Met at LBSNAA\nFoundation Course batch: 99th FC\nTraining group: Alpha",
+      migrated.otherDetails,
+    )
+  }
 }

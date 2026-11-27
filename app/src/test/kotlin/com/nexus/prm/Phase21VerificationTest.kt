@@ -116,7 +116,8 @@ class Phase21VerificationTest {
     val merged = targetRepo.getProfile("shared-1")!!
     assertEquals("Local Name", merged.name)
     assertEquals("+91 90000 00002", merged.phone)
-    assertEquals("Local Group", merged.trainingGroup)
+    assertEquals("", merged.trainingGroup)
+    assertTrue(merged.otherDetails.contains("Training group: Local Group"))
     assertTrue(merged.isFavourite)
     assertEquals("shared@example.com", merged.email)
     assertEquals("LBSNAA", merged.organisation)

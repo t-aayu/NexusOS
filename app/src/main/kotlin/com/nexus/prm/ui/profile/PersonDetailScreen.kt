@@ -330,13 +330,11 @@ fun PersonDetailScreen(
       }
 
       val moreDetails = listOf(
+        "Service" to profile.service,
+        "Batch" to profile.serviceBatch,
+        "Cadre" to profile.cadre,
         "Organisation" to profile.organisation,
         "Designation" to profile.designation,
-        "Service" to profile.service,
-        "Cadre" to profile.cadre,
-        "Service batch" to profile.serviceBatch,
-        "Foundation Course batch" to profile.foundationCourseBatch,
-        "Training group" to profile.trainingGroup,
       ).filter { it.second.isNotBlank() }
 
       if (moreDetails.isNotEmpty()) {

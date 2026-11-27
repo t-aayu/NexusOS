@@ -180,6 +180,31 @@ data class PersonProfile(
 
   fun currentPosting(): PostingEntry? = postings.firstOrNull { it.isCurrent }
 
+  fun migrateLegacyTrainingFieldsToOtherDetails(): PersonProfile {
+    val fc = foundationCourseBatch.trim()
+    val tg = trainingGroup.trim()
+    if (fc.isEmpty() && tg.isEmpty()) return this
+
+    val existingNotes = otherDetails.trim()
+    val appended = buildList {
+      if (fc.isNotEmpty()) {
+        val line = "Foundation Course batch: $fc"
+        if (!existingNotes.contains(line, ignoreCase = true)) add(line)
+      }
+      if (tg.isNotEmpty()) {
+        val line = "Training group: $tg"
+        if (!existingNotes.contains(line, ignoreCase = true)) add(line)
+      }
+    }
+    val mergedOtherDetails = (listOf(existingNotes).filter { it.isNotEmpty() } + appended)
+      .joinToString("\n")
+    return copy(
+      foundationCourseBatch = "",
+      trainingGroup = "",
+      otherDetails = mergedOtherDetails,
+    )
+  }
+
   fun withSyncedPostings(): PersonProfile {
     val normalizedPhones = resolvedPhones()
     val normalizedEmails = resolvedEmails()

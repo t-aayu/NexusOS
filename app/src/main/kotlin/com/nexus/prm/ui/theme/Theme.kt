@@ -20,6 +20,8 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
@@ -184,17 +186,23 @@ fun NexusTheme(
 }
 
 object NexusFrostedStyle {
-  val TonalElevation = 2.dp
-  val ShadowElevation = 2.dp
+  val TonalElevation = 0.dp
+  val ShadowElevation = 0.dp
 
-  fun surfaceColor(colorScheme: ColorScheme): Color =
-    colorScheme.surfaceContainerLow.copy(alpha = 0.90f)
+  fun surfaceColor(colorScheme: ColorScheme): Color {
+    val isLight = colorScheme.background.luminance() > 0.5f
+    val tintWeight = if (isLight) 0.42f else 0.24f
+    return lerp(colorScheme.surfaceContainerLow, colorScheme.primaryContainer, tintWeight)
+  }
 
-  fun toolbarColor(colorScheme: ColorScheme): Color =
-    colorScheme.surfaceContainerLow.copy(alpha = 0.94f)
+  fun toolbarColor(colorScheme: ColorScheme): Color {
+    val isLight = colorScheme.background.luminance() > 0.5f
+    val tintWeight = if (isLight) 0.30f else 0.18f
+    return lerp(colorScheme.background, colorScheme.primaryContainer, tintWeight)
+  }
 
   fun borderColor(colorScheme: ColorScheme): Color =
-    colorScheme.outlineVariant.copy(alpha = 0.72f)
+    colorScheme.primary.copy(alpha = 0.24f)
 
   fun borderStroke(colorScheme: ColorScheme): BorderStroke =
     BorderStroke(1.dp, borderColor(colorScheme))

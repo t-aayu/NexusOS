@@ -93,7 +93,8 @@ class Phase2VerificationTest {
     assertNotNull(aditi)
     assertEquals("Aditi Test", aditi?.name)
     assertTrue(aditi?.isFavourite == true)
-    assertEquals("Group A", aditi?.trainingGroup)
+    assertEquals("", aditi?.trainingGroup)
+    assertTrue(aditi?.otherDetails?.contains("Training group: Group A") == true)
     assertEquals(emptyList<String>(), aditi?.tags)
     assertArrayEquals(photoBytes, upgradedRepo.loadPhotoBytes("aditi.jpg"))
     assertEquals(emptyList<Any>(), upgradedRepo.groups.value)
@@ -206,7 +207,8 @@ class Phase2VerificationTest {
     assertEquals("", kabir.phone)
     assertEquals("", kabir.trainingGroup)
     val riya = reloaded.profiles.value.first { it.name == "Riya Test" }
-    assertEquals("Group B, Trek", riya.trainingGroup)
+    assertEquals("", riya.trainingGroup)
+    assertTrue(riya.otherDetails.contains("Training group: Group B, Trek"))
     val aditi = reloaded.getProfile("aditi-1")
     assertEquals("Aditi Test", aditi?.name)
 
@@ -363,7 +365,8 @@ class Phase2VerificationTest {
     assertEquals(1, reloaded.groups.value.size)
     assertEquals("District Visit Squad", reloaded.groups.value.first().name)
     assertEquals(listOf(meera.id), reloaded.groups.value.first().memberIds)
-    assertEquals("Group A", reloaded.getProfile(meera.id)?.trainingGroup)
+    assertEquals("", reloaded.getProfile(meera.id)?.trainingGroup)
+    assertTrue(reloaded.getProfile(meera.id)?.otherDetails?.contains("Training group: Group A") == true)
   }
 
   @Test

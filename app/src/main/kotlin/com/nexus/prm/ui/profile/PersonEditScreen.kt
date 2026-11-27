@@ -146,45 +146,44 @@ data class PersonEditDraft(
 ) {
   fun applySavedProfile(existing: PersonProfile): PersonEditDraft {
     if (isInitialized) return this
+    val migrated = existing.migrateLegacyTrainingFieldsToOtherDetails()
     return copy(
       isInitialized = true,
-      loadedExisting = existing,
-      name = existing.name,
-      phone = existing.primaryPhone(),
+      loadedExisting = migrated,
+      name = migrated.name,
+      phone = migrated.primaryPhone(),
       phoneRows = ensureTrailingEmptyRow(
-        existing.resolvedPhones().map {
+        migrated.resolvedPhones().map {
           ContactRowDraft(value = it.value, label = it.label, isPrimary = it.isPrimary)
         },
       ),
-      category = existing.category,
-      customCategory = existing.customCategory,
-      categoryQuery = existing.categoryLabel().orEmpty(),
-      whereWeMet = existing.whereWeMet,
-      email = existing.primaryEmail(),
+      category = migrated.category,
+      customCategory = migrated.customCategory,
+      categoryQuery = migrated.categoryLabel().orEmpty(),
+      whereWeMet = migrated.whereWeMet,
+      email = migrated.primaryEmail(),
       emailRows = ensureTrailingEmptyRow(
-        existing.resolvedEmails().map {
+        migrated.resolvedEmails().map {
           ContactRowDraft(value = it.value, label = it.label, isPrimary = it.isPrimary)
         },
       ),
-      organisation = existing.organisation,
-      designation = existing.designation,
-      service = existing.service,
-      cadre = existing.cadre,
-      serviceBatch = existing.serviceBatch,
-      foundationCourseBatch = existing.foundationCourseBatch,
-      trainingGroup = existing.trainingGroup,
-      otherDetails = existing.otherDetails,
-      existingPhotoFileName = existing.photoFileName,
-      tags = existing.tags,
+      organisation = migrated.organisation,
+      designation = migrated.designation,
+      service = migrated.service,
+      cadre = migrated.cadre,
+      serviceBatch = migrated.serviceBatch,
+      foundationCourseBatch = "",
+      trainingGroup = "",
+      otherDetails = migrated.otherDetails,
+      existingPhotoFileName = migrated.photoFileName,
+      tags = migrated.tags,
       moreDetailsExpanded = listOf(
-        existing.email,
-        existing.organisation,
-        existing.designation,
-        existing.service,
-        existing.cadre,
-        existing.serviceBatch,
-        existing.foundationCourseBatch,
-        existing.trainingGroup,
+        migrated.email,
+        migrated.organisation,
+        migrated.designation,
+        migrated.service,
+        migrated.cadre,
+        migrated.serviceBatch,
       ).any { it.isNotBlank() },
     )
   }
@@ -795,10 +794,46 @@ fun PersonEditScreen(
       AnimatedVisibility(visible = draft.moreDetailsExpanded) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
           val nextFocusAction = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) })
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+          ) {
+            OutlinedTextField(
+              value = draft.service,
+              onValueChange = { draft = draft.copy(service = it) },
+              label = { Text("Service") },
+              colors = NexusFrostedStyle.textFieldColors(),
+              singleLine = true,
+              keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Next),
+              keyboardActions = nextFocusAction,
+              modifier = Modifier.weight(1f).bringIntoViewOnFocus(),
+            )
+            OutlinedTextField(
+              value = draft.serviceBatch,
+              onValueChange = { draft = draft.copy(serviceBatch = it) },
+              label = { Text("Batch") },
+              colors = NexusFrostedStyle.textFieldColors(),
+              singleLine = true,
+              keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+              keyboardActions = nextFocusAction,
+              modifier = Modifier.weight(1f).bringIntoViewOnFocus(),
+            )
+          }
+          OutlinedTextField(
+            value = draft.cadre,
+            onValueChange = { draft = draft.copy(cadre = it) },
+            label = { Text("Cadre") },
+            colors = NexusFrostedStyle.textFieldColors(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
+            keyboardActions = nextFocusAction,
+            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
+          )
           OutlinedTextField(
             value = draft.organisation,
             onValueChange = { draft = draft.copy(organisation = it) },
             label = { Text("Organisation") },
+            colors = NexusFrostedStyle.textFieldColors(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
             keyboardActions = nextFocusAction,
@@ -808,51 +843,7 @@ fun PersonEditScreen(
             value = draft.designation,
             onValueChange = { draft = draft.copy(designation = it) },
             label = { Text("Designation") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
-            keyboardActions = nextFocusAction,
-            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
-          )
-          OutlinedTextField(
-            value = draft.service,
-            onValueChange = { draft = draft.copy(service = it) },
-            label = { Text("Service") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Next),
-            keyboardActions = nextFocusAction,
-            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
-          )
-          OutlinedTextField(
-            value = draft.cadre,
-            onValueChange = { draft = draft.copy(cadre = it) },
-            label = { Text("Cadre") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
-            keyboardActions = nextFocusAction,
-            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
-          )
-          OutlinedTextField(
-            value = draft.serviceBatch,
-            onValueChange = { draft = draft.copy(serviceBatch = it) },
-            label = { Text("Service batch") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-            keyboardActions = nextFocusAction,
-            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
-          )
-          OutlinedTextField(
-            value = draft.foundationCourseBatch,
-            onValueChange = { draft = draft.copy(foundationCourseBatch = it) },
-            label = { Text("Foundation Course batch") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-            keyboardActions = nextFocusAction,
-            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
-          )
-          OutlinedTextField(
-            value = draft.trainingGroup,
-            onValueChange = { draft = draft.copy(trainingGroup = it) },
-            label = { Text("Training group") },
+            colors = NexusFrostedStyle.textFieldColors(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
             keyboardActions = nextFocusAction,
@@ -865,6 +856,7 @@ fun PersonEditScreen(
         value = draft.otherDetails,
         onValueChange = { draft = draft.copy(otherDetails = it) },
         label = { Text("Other details") },
+        colors = NexusFrostedStyle.textFieldColors(),
         minLines = 3,
         maxLines = 6,
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
