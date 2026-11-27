@@ -37,7 +37,9 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 --decode > nexus-release.jks
 
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest --console=plain
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest --console=plain
 
       - name: Build signed release APK
         env:
