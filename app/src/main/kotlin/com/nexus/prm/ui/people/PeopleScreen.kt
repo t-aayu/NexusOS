@@ -418,6 +418,21 @@ private fun FilterBar(
   }
 }
 
+internal fun personCardSubtitle(profile: PersonProfile): String {
+  val primary = listOf(
+    profile.service,
+    profile.serviceBatch,
+    profile.cadre,
+  ).mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+
+  val fallback = listOf(
+    profile.designation,
+    profile.organisation,
+  ).mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+
+  return (primary + fallback).take(3).joinToString(" \u00B7 ")
+}
+
 @Composable
 private fun PersonListCard(
   profile: PersonProfile,
@@ -455,11 +470,7 @@ private fun PersonListCard(
           maxLines = 1,
           overflow = TextOverflow.Ellipsis,
         )
-        val primaryMeta = listOfNotNull(
-          profile.categoryLabel(),
-          profile.trainingGroup.takeIf { it.isNotBlank() },
-          profile.service.takeIf { it.isNotBlank() },
-        ).joinToString(" Â· ")
+        val primaryMeta = personCardSubtitle(profile)
         if (primaryMeta.isNotBlank()) {
           Text(
             text = primaryMeta,
@@ -481,7 +492,7 @@ private fun PersonListCard(
         }
         if (profile.tags.isNotEmpty()) {
           Text(
-            text = profile.tags.joinToString(" · ") { "#$it" },
+            text = profile.tags.joinToString(" \u00B7 ") { "#$it" },
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.secondary,
             maxLines = 1,

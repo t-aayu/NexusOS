@@ -12,6 +12,7 @@ import com.nexus.prm.data.PersonCategory
 import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.data.PostingEntry
 import com.nexus.prm.data.ScheduledBackupFile
+import com.nexus.prm.ui.people.personCardSubtitle
 import com.nexus.prm.ui.profile.DraftPhotoStorage
 import com.nexus.prm.ui.profile.PersonEditDraft
 import java.io.File
@@ -668,5 +669,28 @@ class NexusV101VerificationTest {
     )
     emptyLocalTarget.applyMergeRestore(emptyLocalTarget.inspectBackup(backupWithOther, "NewPass!"))
     assertEquals(multilineOther, emptyLocalTarget.getProfile("od-1")!!.otherDetails)
+  }
+
+  @Test
+  fun personCardSubtitle_showsUpToThreeFromServiceBatchCadreThenDesignationOrg() {
+    val full = PersonProfile(
+      id = "1",
+      name = "Aaditya",
+      service = "IAS",
+      serviceBatch = "2018",
+      cadre = "UP",
+      designation = "DM",
+      organisation = "State Gov",
+      createdAtEpochMs = 1L,
+      updatedAtEpochMs = 1L,
+    )
+    assertEquals("IAS \u00B7 2018 \u00B7 UP", personCardSubtitle(full))
+
+    val partial = full.copy(serviceBatch = "", cadre = "")
+    assertEquals("IAS \u00B7 DM \u00B7 State Gov", personCardSubtitle(partial))
+
+    val twoPrimaryOneFallback = full.copy(serviceBatch = "")
+    assertEquals("IAS \u00B7 UP \u00B7 DM", personCardSubtitle(twoPrimaryOneFallback))
+    assertFalse(personCardSubtitle(twoPrimaryOneFallback).contains("Â"))
   }
 }
