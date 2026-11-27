@@ -3,6 +3,14 @@ package com.nexus.prm.data
 object DirectorySearch {
   fun normalizePhoneDigits(raw: String): String = raw.filter { it.isDigit() }
 
+  fun isPhoneLikeQuery(query: String): Boolean {
+    val trimmed = query.trim()
+    if (trimmed.none { it.isDigit() }) return false
+    return trimmed.all { it.isDigit() || it in PHONE_QUERY_CHARS }
+  }
+
+  private val PHONE_QUERY_CHARS = setOf('+', '-', '(', ')', ' ', '.')
+
   fun matchesQuery(profile: PersonProfile, query: String): Boolean {
     val trimmed = query.trim()
     if (trimmed.isEmpty()) return true
@@ -10,6 +18,9 @@ object DirectorySearch {
     val textFields = listOf(
       profile.name,
       profile.phone,
+      profile.email,
+      profile.designation,
+      profile.currentPosting()?.location.orEmpty(),
       profile.service,
       profile.cadre,
       profile.serviceBatch,
@@ -26,10 +37,10 @@ object DirectorySearch {
       return true
     }
 
-    val queryDigits = normalizePhoneDigits(trimmed)
-    if (queryDigits.isNotEmpty() && profile.phone.isNotBlank()) {
+    if (isPhoneLikeQuery(trimmed) && profile.phone.isNotBlank()) {
+      val queryDigits = normalizePhoneDigits(trimmed)
       val phoneDigits = normalizePhoneDigits(profile.phone)
-      if (phoneDigits.contains(queryDigits)) {
+      if (queryDigits.isNotEmpty() && phoneDigits.contains(queryDigits)) {
         return true
       }
     }

@@ -13,6 +13,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -75,13 +76,18 @@ class SafBackupDestination(
     val dir = rootDir() ?: error("Destination folder is not accessible")
     val created = dir.createFile("application/octet-stream", fileName)
       ?: error("Could not create backup file in selected destination")
-    context.contentResolver.openOutputStream(created.uri)?.use { out ->
-      out.write(bytes)
-      out.flush()
-    } ?: error("Could not write to backup file")
+    return try {
+      context.contentResolver.openOutputStream(created.uri)?.use { out ->
+        out.write(bytes)
+        out.flush()
+      } ?: error("Could not write to backup file")
 
-    return context.contentResolver.openInputStream(created.uri)?.use { it.readBytes() }
-      ?: error("Could not read back written backup for verification")
+      context.contentResolver.openInputStream(created.uri)?.use { it.readBytes() }
+        ?: error("Could not read back written backup for verification")
+    } catch (t: Throwable) {
+      runCatching { created.delete() }
+      throw t
+    }
   }
 
   override fun deleteFile(fileName: String): Boolean {
@@ -100,6 +106,7 @@ class AutoBackupRunner {
     password: String,
     retentionCount: Int = DEFAULT_RETENTION_COUNT,
     nowEpochMs: Long = System.currentTimeMillis(),
+    stagingDir: File? = null,
   ): Result<String> = runMutex.withLock {
     runCatching {
       require(password.isNotEmpty()) { "Backup password is required for automatic backups." }
@@ -108,12 +115,32 @@ class AutoBackupRunner {
       }
 
       val encrypted = repository.exportBackup(password)
+      val stagedFile = if (stagingDir != null) {
+        if (!stagingDir.exists()) stagingDir.mkdirs()
+        File(stagingDir, "staged-${UUID.randomUUID()}.nxbk.tmp")
+      } else {
+        kotlin.io.path.createTempFile("nexus-stage-", ".nxbk.tmp").toFile()
+      }
+
+      val verifiedBytes = try {
+        stagedFile.writeBytes(encrypted)
+        val stagedReadBack = stagedFile.readBytes()
+        repository.inspectBackup(stagedReadBack, password)
+        stagedReadBack
+      } finally {
+        stagedFile.delete()
+      }
+
       val stamp = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(Date(nowEpochMs))
       val fileName = "$AUTO_FILE_PREFIX$stamp$AUTO_FILE_SUFFIX"
 
-      val readBack = destination.writeAndReadBack(fileName, encrypted)
-      // Verify the written file can be authenticated and parsed before pruning
-      repository.inspectBackup(readBack, password)
+      try {
+        val publishedReadBack = destination.writeAndReadBack(fileName, verifiedBytes)
+        repository.inspectBackup(publishedReadBack, password)
+      } catch (t: Throwable) {
+        runCatching { destination.deleteFile(fileName) }
+        throw t
+      }
 
       val scheduled = destination.listScheduledFiles()
         .sortedByDescending { it.name }
@@ -208,6 +235,7 @@ class AutoBackupManager(
       destination = destination,
       password = current.password,
       retentionCount = current.retentionCount,
+      stagingDir = File(filesDir, "auto_backup_staging"),
     )
 
     result.onSuccess {

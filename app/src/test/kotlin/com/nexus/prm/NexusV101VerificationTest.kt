@@ -1,0 +1,342 @@
+package com.nexus.prm
+
+import com.nexus.prm.data.AutoBackupRunner
+import com.nexus.prm.data.BackupDestination
+import com.nexus.prm.data.DirectorySearch
+import com.nexus.prm.data.LocalDirectoryRepository
+import com.nexus.prm.data.LocalStorageCrypto
+import com.nexus.prm.data.PersonCategory
+import com.nexus.prm.data.PersonProfile
+import com.nexus.prm.data.PostingEntry
+import com.nexus.prm.data.ScheduledBackupFile
+import com.nexus.prm.ui.profile.DraftPhotoStorage
+import com.nexus.prm.ui.profile.PersonEditDraft
+import java.io.File
+import java.io.IOException
+import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+
+class NexusV101VerificationTest {
+
+  @get:Rule
+  val tempFolder = TemporaryFolder()
+
+  private val passthroughCrypto = object : LocalStorageCrypto {
+    override fun encrypt(plaintext: ByteArray): ByteArray = plaintext
+    override fun decrypt(ciphertext: ByteArray): ByteArray = ciphertext
+  }
+
+  private fun newRepo(dir: File = tempFolder.newFolder("repo_${System.nanoTime()}")): LocalDirectoryRepository =
+    LocalDirectoryRepository(filesDir = dir, crypto = passthroughCrypto)
+
+  @Test
+  fun NX101_01_consistentExportMissingPhotoFailureAndValidManualPreview() = runTest {
+    val dir = tempFolder.newFolder("nx101_01")
+    val repo = newRepo(dir)
+    val initialBytes = byteArrayOf(10, 20, 30, 40)
+    val saved = repo.saveProfile(
+      profile = PersonProfile(
+        id = "p-1",
+        name = "Aditi Export",
+        phone = "+91 90000 01001",
+        createdAtEpochMs = 100L,
+        updatedAtEpochMs = 100L,
+      ),
+      pendingPhotoBytes = initialBytes,
+    )
+
+    // Valid manual export + reopen + inspect preview
+    val exported = repo.exportBackup("ManualPass1!")
+    val preview = repo.inspectBackup(exported, "ManualPass1!")
+    assertEquals(1, preview.profiles.size)
+    assertArrayEquals(initialBytes, preview.photos[saved.photoFileName])
+
+    // Missing referenced photo must fail with clear message
+    val photoFile = File(File(dir, "photos"), saved.photoFileName!!)
+    assertTrue(photoFile.delete())
+    var failureMessage = ""
+    try {
+      repo.exportBackup("ManualPass1!")
+    } catch (e: IllegalStateException) {
+      failureMessage = e.message.orEmpty()
+    }
+    assertTrue(failureMessage.contains("Missing photo"))
+    assertTrue(failureMessage.contains("Aditi Export"))
+  }
+
+  @Test
+  fun NX101_02_restoreCommitFailureWithOverlappingPhotosPreservesLiveDirectoryAndAllowsSuccess() = runTest {
+    val sourceRepo = newRepo()
+    val incomingPhotoBytes = byteArrayOf(99, 98, 97, 96)
+    val srcSaved = sourceRepo.saveProfile(
+      profile = PersonProfile(
+        id = "incoming-1",
+        name = "Incoming Person",
+        phone = "+91 90000 02002",
+        createdAtEpochMs = 200L,
+        updatedAtEpochMs = 200L,
+      ),
+      pendingPhotoBytes = incomingPhotoBytes,
+    )
+    val backupBytes = sourceRepo.exportBackup("BackupPass!")
+
+    val targetDir = tempFolder.newFolder("nx101_02_target")
+    val targetRepo = newRepo(targetDir)
+    val livePhotoBytes = byteArrayOf(1, 2, 3, 4, 5)
+    val liveProfile = targetRepo.saveProfile(
+      profile = PersonProfile(
+        id = "local-1",
+        name = "Local Live",
+        phone = "+91 90000 01001",
+        createdAtEpochMs = 100L,
+        updatedAtEpochMs = 100L,
+      ),
+      pendingPhotoBytes = livePhotoBytes,
+    )
+
+    // Force an overlapping photo filename in the preview
+    val overlappingName = liveProfile.photoFileName!!
+    val rawPreview = targetRepo.inspectBackup(backupBytes, "BackupPass!")
+    val overlappingPreview = rawPreview.copy(
+      profiles = rawPreview.profiles.map { it.copy(photoFileName = overlappingName) },
+      photos = mapOf(overlappingName to incomingPhotoBytes),
+    )
+
+    // 1. Inject commit failure during merge restore
+    targetRepo.beforeSnapshotPersistHook = { throw IOException("Simulated disk full") }
+    var mergeFailed = false
+    try {
+      targetRepo.applyMergeRestore(overlappingPreview)
+    } catch (_: IOException) {
+      mergeFailed = true
+    }
+    assertTrue(mergeFailed)
+
+    // 2. Inject commit failure during full replacement
+    var replaceFailed = false
+    try {
+      targetRepo.applyBackup(overlappingPreview)
+    } catch (_: IOException) {
+      replaceFailed = true
+    }
+    assertTrue(replaceFailed)
+    targetRepo.beforeSnapshotPersistHook = null
+
+    // Reopen repository from disk and verify records + live photo contents are intact
+    val reopened = LocalDirectoryRepository(filesDir = targetDir, crypto = passthroughCrypto)
+    assertEquals(1, reopened.profiles.value.size)
+    assertEquals("Local Live", reopened.profiles.value.single().name)
+    assertArrayEquals(livePhotoBytes, reopened.loadPhotoBytes(overlappingName))
+    assertEquals(1, File(targetDir, "photos").listFiles()?.size)
+
+    // 3. Exercise successful merge (retains local + adds incoming with its own staged photo)
+    reopened.applyMergeRestore(overlappingPreview)
+    assertEquals(2, reopened.profiles.value.size)
+    assertArrayEquals(livePhotoBytes, reopened.loadPhotoBytes(overlappingName))
+    val mergedIncoming = reopened.getProfile("incoming-1")!!
+    assertArrayEquals(incomingPhotoBytes, reopened.loadPhotoBytes(mergedIncoming.photoFileName!!))
+
+    // 4. Exercise deliberate full replacement
+    reopened.applyBackup(overlappingPreview)
+    assertEquals(1, reopened.profiles.value.size)
+    assertEquals("Incoming Person", reopened.profiles.value.single().name)
+    assertArrayEquals(incomingPhotoBytes, reopened.loadPhotoBytes(reopened.profiles.value.single().photoFileName!!))
+  }
+
+  @Test
+  fun NX101_03_scheduledBackupStagingFailureAndSevenLatestRetention() = runTest {
+    val repo = newRepo()
+    repo.saveProfile(PersonProfile(id = "1", name = "Aditi Test", createdAtEpochMs = 100L, updatedAtEpochMs = 100L))
+
+    val destDir = tempFolder.newFolder("nx101_03_dest")
+    val stagingDir = tempFolder.newFolder("nx101_03_stage")
+    val manualFile = File(destDir, "manual-backup.nxbk").apply { writeText("manual") }
+    val unrelatedFile = File(destDir, "notes.txt").apply { writeText("unrelated") }
+
+    val destination = object : BackupDestination {
+      var failPublish = false
+      override fun isAccessible(): Boolean = true
+      override fun listScheduledFiles(): List<ScheduledBackupFile> =
+        (destDir.listFiles() ?: emptyArray())
+          .filter { it.isFile && AutoBackupRunner.isScheduledBackupFileName(it.name) }
+          .map { ScheduledBackupFile(it.name) }
+
+      override fun writeAndReadBack(fileName: String, bytes: ByteArray): ByteArray {
+        val target = File(destDir, fileName)
+        if (failPublish) {
+          target.writeBytes(byteArrayOf(1, 2, 3)) // simulate partial write before failure
+          throw IOException("Simulated destination publish failure")
+        }
+        target.writeBytes(bytes)
+        return target.readBytes()
+      }
+
+      override fun deleteFile(fileName: String): Boolean = File(destDir, fileName).delete()
+    }
+
+    val runner = AutoBackupRunner()
+    var lastCreated = ""
+    for (i in 1..8) {
+      val res = runner.execute(
+        repository = repo,
+        destination = destination,
+        password = "AutoPass123",
+        retentionCount = 7,
+        nowEpochMs = 1_700_000_000_000L + i * 1000L,
+        stagingDir = stagingDir,
+      )
+      assertTrue(res.isSuccess)
+      lastCreated = res.getOrThrow()
+    }
+
+    assertEquals(7, destination.listScheduledFiles().size)
+    assertTrue(destination.listScheduledFiles().any { it.name == lastCreated })
+    assertTrue(manualFile.exists())
+    assertTrue(unrelatedFile.exists())
+    assertEquals(0, stagingDir.listFiles()?.size ?: 0)
+
+    // Simulate failed publication: incomplete file is cleaned up and all 7 prior backups remain
+    destination.failPublish = true
+    val failed = runner.execute(
+      repository = repo,
+      destination = destination,
+      password = "AutoPass123",
+      retentionCount = 7,
+      nowEpochMs = 1_700_000_099_000L,
+      stagingDir = stagingDir,
+    )
+    assertTrue(failed.isFailure)
+    assertEquals(7, destination.listScheduledFiles().size)
+    assertEquals(0, stagingDir.listFiles()?.size ?: 0)
+  }
+
+  @Test
+  fun NX101_04_peopleSearchGroupTextFormattedPhonesNewFieldsAndFilters() {
+    val profiles = listOf(
+      PersonProfile(
+        id = "1",
+        name = "Aditi Sharma",
+        phone = "+91 90000 01001",
+        email = "aditi.sharma@gov.in",
+        designation = "Joint Secretary",
+        trainingGroup = "Group 1",
+        postings = listOf(
+          PostingEntry(
+            id = "post-1",
+            organisation = "Ministry of Finance",
+            designation = "Joint Secretary",
+            location = "New Delhi",
+            isCurrent = true,
+          ),
+        ),
+        createdAtEpochMs = 100L,
+        updatedAtEpochMs = 100L,
+      ),
+      PersonProfile(
+        id = "2",
+        name = "Kabir Verma",
+        phone = "+91 98111 11111",
+        email = "kabir@example.org",
+        designation = "Director",
+        trainingGroup = "Group 2",
+        postings = listOf(
+          PostingEntry(
+            id = "post-2",
+            organisation = "LBSNAA",
+            designation = "Director",
+            location = "Mussoorie",
+            isCurrent = true,
+          ),
+        ),
+        createdAtEpochMs = 200L,
+        updatedAtEpochMs = 200L,
+      ),
+    )
+
+    // "Group 1" must match Group 1 without matching Kabir's phone containing '1'
+    val group1Matches = DirectorySearch.filterAndSort(profiles, "Group 1", null, null, false, false)
+    assertEquals(listOf("1"), group1Matches.map { it.id })
+
+    // Formatted phone search still works
+    val phoneMatches = DirectorySearch.filterAndSort(profiles, "+91 90000-01001", null, null, false, false)
+    assertEquals(listOf("1"), phoneMatches.map { it.id })
+
+    // New fields: email, designation, current posting location
+    assertEquals(listOf("1"), DirectorySearch.filterAndSort(profiles, "aditi.sharma@gov.in", null, null, false, false).map { it.id })
+    assertEquals(listOf("1"), DirectorySearch.filterAndSort(profiles, "Joint Secretary", null, null, false, false).map { it.id })
+    assertEquals(listOf("2"), DirectorySearch.filterAndSort(profiles, "Mussoorie", null, null, false, false).map { it.id })
+
+    // Combined search + training-group filter
+    val combined = DirectorySearch.filterAndSort(profiles, "Director", null, "Group 2", false, false)
+    assertEquals(listOf("2"), combined.map { it.id })
+    val emptyCombined = DirectorySearch.filterAndSort(profiles, "Director", null, "Group 1", false, false)
+    assertTrue(emptyCombined.isEmpty())
+  }
+
+  @Test
+  fun NX101_05_personEditDraftRecoverySessionIsolationAndTempPhotoCleanup() {
+    val filesDir = tempFolder.newFolder("nx101_05")
+    val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    // 1. Add session with unsaved text, category, tags, expanded details, and protected temp photo
+    val addInitial = PersonEditDraft.initialFor(profileId = null)
+    val tempPhotoPath = DraftPhotoStorage.writeTempPhoto(filesDir, addInitial.sessionId, byteArrayOf(7, 8, 9))
+    val editedAdd = addInitial.copy(
+      name = "Unsaved Draft",
+      category = PersonCategory.FELLOW_TRAINEE,
+      tags = listOf("Trek", "Policy"),
+      moreDetailsExpanded = true,
+      email = "draft@example.com",
+      pendingPhotoTempPath = tempPhotoPath,
+    )
+
+    // Simulate screen recreation via serialized draft state (no raw bytes in draft)
+    val encodedAdd = json.encodeToString(editedAdd)
+    val restoredAdd = json.decodeFromString<PersonEditDraft>(encodedAdd)
+    assertEquals("Unsaved Draft", restoredAdd.name)
+    assertEquals(PersonCategory.FELLOW_TRAINEE, restoredAdd.category)
+    assertEquals(listOf("Trek", "Policy"), restoredAdd.tags)
+    assertTrue(restoredAdd.moreDetailsExpanded)
+    assertEquals(tempPhotoPath, restoredAdd.pendingPhotoTempPath)
+    assertArrayEquals(byteArrayOf(7, 8, 9), DraftPhotoStorage.readTempPhoto(restoredAdd.pendingPhotoTempPath))
+
+    // Explicit cancellation cleans up protected temp photo
+    DraftPhotoStorage.deleteTempPhoto(restoredAdd.pendingPhotoTempPath)
+    assertNull(DraftPhotoStorage.readTempPhoto(restoredAdd.pendingPhotoTempPath))
+
+    // 2. Edit session initializes once and does not overwrite unsaved edits on re-init
+    val savedProfile = PersonProfile(
+      id = "p-edit-1",
+      name = "Original Name",
+      phone = "12345",
+      createdAtEpochMs = 100L,
+      updatedAtEpochMs = 100L,
+    )
+    val editDraft = PersonEditDraft.initialFor("p-edit-1").applySavedProfile(savedProfile)
+    assertTrue(editDraft.isInitialized)
+    val userEdited = editDraft.copy(name = "Edited Name")
+    val afterRecreateInit = userEdited.applySavedProfile(savedProfile)
+    assertEquals("Edited Name", afterRecreateInit.name)
+
+    // 3. Different profile opens its own independent session
+    val otherProfile = PersonProfile(
+      id = "p-edit-2",
+      name = "Second Person",
+      createdAtEpochMs = 200L,
+      updatedAtEpochMs = 200L,
+    )
+    val otherDraft = PersonEditDraft.initialFor("p-edit-2").applySavedProfile(otherProfile)
+    assertEquals("Second Person", otherDraft.name)
+    assertNotNull(otherDraft.sessionId)
+    assertFalse(otherDraft.sessionId == userEdited.sessionId)
+  }
+}

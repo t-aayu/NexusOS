@@ -1,5 +1,6 @@
 package com.nexus.prm.ui.profile
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
@@ -50,6 +51,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,10 +70,110 @@ import com.nexus.prm.data.PersonCategory
 import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.data.PhotoUtils
 import com.nexus.prm.ui.components.ProfileAvatar
+import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+@Serializable
+data class PersonEditDraft(
+  val sessionId: String,
+  val profileId: String? = null,
+  val isInitialized: Boolean = false,
+  val loadedExisting: PersonProfile? = null,
+  val name: String = "",
+  val phone: String = "",
+  val category: PersonCategory? = null,
+  val whereWeMet: String = "",
+  val email: String = "",
+  val organisation: String = "",
+  val designation: String = "",
+  val service: String = "",
+  val cadre: String = "",
+  val serviceBatch: String = "",
+  val foundationCourseBatch: String = "",
+  val trainingGroup: String = "",
+  val existingPhotoFileName: String? = null,
+  val pendingPhotoTempPath: String? = null,
+  val removePhoto: Boolean = false,
+  val tags: List<String> = emptyList(),
+  val tagInput: String = "",
+  val moreDetailsExpanded: Boolean = false,
+) {
+  fun applySavedProfile(existing: PersonProfile): PersonEditDraft {
+    if (isInitialized) return this
+    return copy(
+      isInitialized = true,
+      loadedExisting = existing,
+      name = existing.name,
+      phone = existing.phone,
+      category = existing.category,
+      whereWeMet = existing.whereWeMet,
+      email = existing.email,
+      organisation = existing.organisation,
+      designation = existing.designation,
+      service = existing.service,
+      cadre = existing.cadre,
+      serviceBatch = existing.serviceBatch,
+      foundationCourseBatch = existing.foundationCourseBatch,
+      trainingGroup = existing.trainingGroup,
+      existingPhotoFileName = existing.photoFileName,
+      tags = existing.tags,
+      moreDetailsExpanded = listOf(
+        existing.email,
+        existing.organisation,
+        existing.designation,
+        existing.service,
+        existing.cadre,
+        existing.serviceBatch,
+        existing.foundationCourseBatch,
+        existing.trainingGroup,
+      ).any { it.isNotBlank() },
+    )
+  }
+
+  companion object {
+    private val json = Json {
+      ignoreUnknownKeys = true
+      encodeDefaults = true
+    }
+
+    fun initialFor(profileId: String?): PersonEditDraft = PersonEditDraft(
+      sessionId = UUID.randomUUID().toString(),
+      profileId = profileId,
+      isInitialized = profileId == null,
+    )
+
+    val Saver: Saver<PersonEditDraft, String> = Saver(
+      save = { draft -> json.encodeToString(draft) },
+      restore = { encoded -> json.decodeFromString<PersonEditDraft>(encoded) },
+    )
+  }
+}
+
+object DraftPhotoStorage {
+  fun writeTempPhoto(filesDir: File, sessionId: String, bytes: ByteArray): String {
+    val dir = File(filesDir, "draft_photos")
+    if (!dir.exists()) dir.mkdirs()
+    val file = File(dir, "$sessionId.jpg")
+    file.writeBytes(bytes)
+    return file.absolutePath
+  }
+
+  fun readTempPhoto(path: String?): ByteArray? {
+    if (path.isNullOrBlank()) return null
+    val file = File(path)
+    return if (file.exists()) runCatching { file.readBytes() }.getOrNull() else null
+  }
+
+  fun deleteTempPhoto(path: String?) {
+    if (path.isNullOrBlank()) return
+    runCatching { File(path).delete() }
+  }
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -84,134 +187,113 @@ fun PersonEditScreen(
   val context = LocalContext.current
   val scope = rememberCoroutineScope()
 
-  var loadedExisting by remember { mutableStateOf<PersonProfile?>(null) }
-  var isInitialized by remember { mutableStateOf(profileId == null) }
-
-  var name by remember { mutableStateOf("") }
-  var phone by remember { mutableStateOf("") }
-  var category by remember { mutableStateOf<PersonCategory?>(null) }
-  var whereWeMet by remember { mutableStateOf("") }
-
-  var email by remember { mutableStateOf("") }
-  var organisation by remember { mutableStateOf("") }
-  var designation by remember { mutableStateOf("") }
-  var service by remember { mutableStateOf("") }
-  var cadre by remember { mutableStateOf("") }
-  var serviceBatch by remember { mutableStateOf("") }
-  var foundationCourseBatch by remember { mutableStateOf("") }
-  var trainingGroup by remember { mutableStateOf("") }
+  var draft by rememberSaveable(profileId, stateSaver = PersonEditDraft.Saver) {
+    mutableStateOf(PersonEditDraft.initialFor(profileId))
+  }
 
   val allProfiles by repository.profiles.collectAsStateWithLifecycle()
   val suggestedTags = remember(allProfiles) { DirectorySearch.distinctTags(allProfiles) }
 
-  var existingPhotoFileName by remember { mutableStateOf<String?>(null) }
   var pendingPhotoBytes by remember { mutableStateOf<ByteArray?>(null) }
-  var removePhoto by remember { mutableStateOf(false) }
+  LaunchedEffect(draft.pendingPhotoTempPath) {
+    pendingPhotoBytes = withContext(Dispatchers.IO) {
+      DraftPhotoStorage.readTempPhoto(draft.pendingPhotoTempPath)
+    }
+  }
 
-  var tags by remember { mutableStateOf<List<String>>(emptyList()) }
-  var tagInput by remember { mutableStateOf("") }
-
-  var moreDetailsExpanded by remember { mutableStateOf(false) }
   var nameError by remember { mutableStateOf<String?>(null) }
   var isSaving by remember { mutableStateOf(false) }
   var pendingDuplicate by remember { mutableStateOf<DuplicateMatch?>(null) }
 
+  fun cancelAndCleanup() {
+    DraftPhotoStorage.deleteTempPhoto(draft.pendingPhotoTempPath)
+    onBack()
+  }
+
+  BackHandler(enabled = !isSaving) {
+    cancelAndCleanup()
+  }
+
   LaunchedEffect(profileId) {
-    if (profileId != null) {
+    if (!draft.isInitialized && profileId != null) {
       val existing = repository.getProfile(profileId)
-      if (existing != null) {
-        loadedExisting = existing
-        name = existing.name
-        phone = existing.phone
-        category = existing.category
-        whereWeMet = existing.whereWeMet
-        email = existing.email
-        organisation = existing.organisation
-        designation = existing.designation
-        service = existing.service
-        cadre = existing.cadre
-        serviceBatch = existing.serviceBatch
-        foundationCourseBatch = existing.foundationCourseBatch
-        trainingGroup = existing.trainingGroup
-        tags = existing.tags
-        existingPhotoFileName = existing.photoFileName
-        moreDetailsExpanded = listOf(
-          existing.email,
-          existing.organisation,
-          existing.designation,
-          existing.service,
-          existing.cadre,
-          existing.serviceBatch,
-          existing.foundationCourseBatch,
-          existing.trainingGroup,
-        ).any { it.isNotBlank() }
+      draft = if (existing != null) {
+        draft.applySavedProfile(existing)
+      } else {
+        draft.copy(isInitialized = true)
       }
-      isInitialized = true
     }
   }
 
   val photoPickerLauncher = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
     if (uri != null) {
       scope.launch {
-        val bytes = withContext(Dispatchers.IO) {
-          PhotoUtils.copyAndCompressFromUri(context, uri)
+        val tempPath = withContext(Dispatchers.IO) {
+          val bytes = PhotoUtils.copyAndCompressFromUri(context, uri) ?: return@withContext null
+          DraftPhotoStorage.writeTempPhoto(context.filesDir, draft.sessionId, bytes)
         }
-        if (bytes != null) {
-          pendingPhotoBytes = bytes
-          removePhoto = false
+        if (tempPath != null) {
+          draft = draft.copy(pendingPhotoTempPath = tempPath, removePhoto = false)
         }
       }
     }
   }
 
   fun commitSave() {
-    val trimmedName = name.trim()
+    val trimmedName = draft.name.trim()
     if (trimmedName.isEmpty() || isSaving) return
     isSaving = true
 
     scope.launch {
       val now = System.currentTimeMillis()
-      val base = loadedExisting
+      val base = draft.loadedExisting
+      val tempPath = draft.pendingPhotoTempPath
+      val pendingBytes = withContext(Dispatchers.IO) {
+        DraftPhotoStorage.readTempPhoto(tempPath)
+      }
       val profile = PersonProfile(
         id = base?.id ?: UUID.randomUUID().toString(),
         name = trimmedName,
-        phone = phone,
-        category = category,
-        whereWeMet = whereWeMet,
-        email = email,
-        organisation = organisation,
-        designation = designation,
-        service = service,
-        cadre = cadre,
-        serviceBatch = serviceBatch,
-        foundationCourseBatch = foundationCourseBatch,
-        trainingGroup = trainingGroup,
-        tags = tags,
-        photoFileName = if (removePhoto) null else existingPhotoFileName,
+        phone = draft.phone,
+        category = draft.category,
+        whereWeMet = draft.whereWeMet,
+        email = draft.email,
+        organisation = draft.organisation,
+        designation = draft.designation,
+        service = draft.service,
+        cadre = draft.cadre,
+        serviceBatch = draft.serviceBatch,
+        foundationCourseBatch = draft.foundationCourseBatch,
+        trainingGroup = draft.trainingGroup,
+        tags = draft.tags,
+        photoFileName = if (draft.removePhoto) null else draft.existingPhotoFileName,
         isFavourite = base?.isFavourite ?: false,
         createdAtEpochMs = base?.createdAtEpochMs ?: now,
         updatedAtEpochMs = now,
       )
       val saved = repository.saveProfile(
         profile = profile,
-        pendingPhotoBytes = pendingPhotoBytes,
-        removePhoto = removePhoto,
+        pendingPhotoBytes = pendingBytes,
+        removePhoto = draft.removePhoto,
       )
+      withContext(Dispatchers.IO) {
+        DraftPhotoStorage.deleteTempPhoto(tempPath)
+      }
       isSaving = false
       onSaved(saved.id)
     }
   }
 
   fun performSave() {
-    val trimmedName = name.trim()
+    val trimmedName = draft.name.trim()
     if (trimmedName.isEmpty()) {
       nameError = "Name is required"
       return
     }
     if (isSaving) return
     val match = DuplicateMatcher.findMatch(
-      phone = phone,
-      email = email,
+      phone = draft.phone,
+      email = draft.email,
       candidates = allProfiles,
       excludeProfileId = profileId,
     )
@@ -233,19 +315,19 @@ fun PersonEditScreen(
         ),
         title = { Text(if (profileId == null) "Add person" else "Edit person", fontWeight = FontWeight.SemiBold) },
         navigationIcon = {
-          IconButton(onClick = onBack) {
+          IconButton(onClick = ::cancelAndCleanup) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
           }
         },
         actions = {
-          TextButton(onClick = ::performSave, enabled = !isSaving && isInitialized) {
+          TextButton(onClick = ::performSave, enabled = !isSaving && draft.isInitialized) {
             Text("Save", fontWeight = FontWeight.SemiBold)
           }
         },
       )
     },
   ) { innerPadding ->
-    if (!isInitialized) return@Scaffold
+    if (!draft.isInitialized) return@Scaffold
 
     Column(
       modifier = Modifier
@@ -255,14 +337,14 @@ fun PersonEditScreen(
         .padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-      val hasPhoto = (pendingPhotoBytes != null) || (!removePhoto && existingPhotoFileName != null)
+      val hasPhoto = (draft.pendingPhotoTempPath != null) || (!draft.removePhoto && draft.existingPhotoFileName != null)
       Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
       ) {
         ProfileAvatar(
-          name = name.ifBlank { "?" },
-          photoFileName = if (removePhoto) null else existingPhotoFileName,
+          name = draft.name.ifBlank { "?" },
+          photoFileName = if (draft.removePhoto) null else draft.existingPhotoFileName,
           loadPhotoBytes = repository::loadPhotoBytes,
           size = 72.dp,
           overridePhotoBytes = pendingPhotoBytes,
@@ -279,8 +361,8 @@ fun PersonEditScreen(
           if (hasPhoto) {
             TextButton(
               onClick = {
-                pendingPhotoBytes = null
-                removePhoto = true
+                DraftPhotoStorage.deleteTempPhoto(draft.pendingPhotoTempPath)
+                draft = draft.copy(pendingPhotoTempPath = null, removePhoto = true)
               },
             ) {
               Text("Remove photo", color = MaterialTheme.colorScheme.error)
@@ -290,9 +372,9 @@ fun PersonEditScreen(
       }
 
       OutlinedTextField(
-        value = name,
+        value = draft.name,
         onValueChange = {
-          name = it
+          draft = draft.copy(name = it)
           if (nameError != null && it.isNotBlank()) nameError = null
         },
         label = { Text("Name *") },
@@ -304,8 +386,8 @@ fun PersonEditScreen(
       )
 
       OutlinedTextField(
-        value = phone,
-        onValueChange = { phone = it },
+        value = draft.phone,
+        onValueChange = { draft = draft.copy(phone = it) },
         label = { Text("Phone") },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
@@ -329,11 +411,11 @@ fun PersonEditScreen(
             selectedLeadingIconColor = MaterialTheme.colorScheme.secondary,
           )
           PersonCategory.entries.forEach { option ->
-            val selected = category == option
+            val selected = draft.category == option
             FilterChip(
               selected = selected,
               colors = categoryChipColors,
-              onClick = { category = if (selected) null else option },
+              onClick = { draft = draft.copy(category = if (selected) null else option) },
               leadingIcon = if (selected) {
                 { Icon(Icons.Filled.Check, contentDescription = null) }
               } else null,
@@ -344,8 +426,8 @@ fun PersonEditScreen(
       }
 
       OutlinedTextField(
-        value = whereWeMet,
-        onValueChange = { whereWeMet = it },
+        value = draft.whereWeMet,
+        onValueChange = { draft = draft.copy(whereWeMet = it) },
         label = { Text("Where we met") },
         minLines = 2,
         maxLines = 4,
@@ -365,34 +447,35 @@ fun PersonEditScreen(
           horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
           OutlinedTextField(
-            value = tagInput,
-            onValueChange = { tagInput = it },
+            value = draft.tagInput,
+            onValueChange = { draft = draft.copy(tagInput = it) },
             label = { Text("Add tag") },
             singleLine = true,
             modifier = Modifier.weight(1f),
           )
           OutlinedButton(
             onClick = {
-              val normalized = DirectorySearch.normalizeTags(tags + tagInput, allProfiles)
-              tags = normalized
-              tagInput = ""
+              val normalized = DirectorySearch.normalizeTags(draft.tags + draft.tagInput, allProfiles)
+              draft = draft.copy(tags = normalized, tagInput = "")
             },
-            enabled = tagInput.isNotBlank(),
+            enabled = draft.tagInput.isNotBlank(),
           ) {
             Icon(Icons.Filled.Add, contentDescription = null)
             Spacer(modifier = Modifier.width(4.dp))
             Text("Add")
           }
         }
-        if (tags.isNotEmpty()) {
+        if (draft.tags.isNotEmpty()) {
           FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
           ) {
-            tags.forEach { tag ->
+            draft.tags.forEach { tag ->
               InputChip(
                 selected = true,
-                onClick = { tags = tags.filterNot { it.equals(tag, ignoreCase = true) } },
+                onClick = {
+                  draft = draft.copy(tags = draft.tags.filterNot { it.equals(tag, ignoreCase = true) })
+                },
                 label = { Text(tag) },
                 trailingIcon = { Icon(Icons.Filled.Close, contentDescription = "Remove $tag") },
               )
@@ -400,7 +483,7 @@ fun PersonEditScreen(
           }
         }
         val unusedSuggestions = suggestedTags.filter { candidate ->
-          tags.none { it.equals(candidate, ignoreCase = true) }
+          draft.tags.none { it.equals(candidate, ignoreCase = true) }
         }
         if (unusedSuggestions.isNotEmpty()) {
           FlowRow(
@@ -409,7 +492,9 @@ fun PersonEditScreen(
           ) {
             unusedSuggestions.take(8).forEach { suggestion ->
               SuggestionChip(
-                onClick = { tags = DirectorySearch.normalizeTags(tags + suggestion, allProfiles) },
+                onClick = {
+                  draft = draft.copy(tags = DirectorySearch.normalizeTags(draft.tags + suggestion, allProfiles))
+                },
                 label = { Text("+ $suggestion") },
               )
             }
@@ -420,7 +505,7 @@ fun PersonEditScreen(
       Row(
         modifier = Modifier
           .fillMaxWidth()
-          .clickable { moreDetailsExpanded = !moreDetailsExpanded }
+          .clickable { draft = draft.copy(moreDetailsExpanded = !draft.moreDetailsExpanded) }
           .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -432,71 +517,71 @@ fun PersonEditScreen(
           color = MaterialTheme.colorScheme.primary,
         )
         Icon(
-          imageVector = if (moreDetailsExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-          contentDescription = if (moreDetailsExpanded) "Collapse more details" else "Expand more details",
+          imageVector = if (draft.moreDetailsExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+          contentDescription = if (draft.moreDetailsExpanded) "Collapse more details" else "Expand more details",
           tint = MaterialTheme.colorScheme.primary,
         )
       }
 
-      AnimatedVisibility(visible = moreDetailsExpanded) {
+      AnimatedVisibility(visible = draft.moreDetailsExpanded) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
           OutlinedTextField(
-            value = email,
-            onValueChange = { email = it },
+            value = draft.email,
+            onValueChange = { draft = draft.copy(email = it) },
             label = { Text("Email") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             modifier = Modifier.fillMaxWidth(),
           )
           OutlinedTextField(
-            value = organisation,
-            onValueChange = { organisation = it },
+            value = draft.organisation,
+            onValueChange = { draft = draft.copy(organisation = it) },
             label = { Text("Organisation") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
             modifier = Modifier.fillMaxWidth(),
           )
           OutlinedTextField(
-            value = designation,
-            onValueChange = { designation = it },
+            value = draft.designation,
+            onValueChange = { draft = draft.copy(designation = it) },
             label = { Text("Designation") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
             modifier = Modifier.fillMaxWidth(),
           )
           OutlinedTextField(
-            value = service,
-            onValueChange = { service = it },
+            value = draft.service,
+            onValueChange = { draft = draft.copy(service = it) },
             label = { Text("Service") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
             modifier = Modifier.fillMaxWidth(),
           )
           OutlinedTextField(
-            value = cadre,
-            onValueChange = { cadre = it },
+            value = draft.cadre,
+            onValueChange = { draft = draft.copy(cadre = it) },
             label = { Text("Cadre") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
             modifier = Modifier.fillMaxWidth(),
           )
           OutlinedTextField(
-            value = serviceBatch,
-            onValueChange = { serviceBatch = it },
+            value = draft.serviceBatch,
+            onValueChange = { draft = draft.copy(serviceBatch = it) },
             label = { Text("Service batch") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
           )
           OutlinedTextField(
-            value = foundationCourseBatch,
-            onValueChange = { foundationCourseBatch = it },
+            value = draft.foundationCourseBatch,
+            onValueChange = { draft = draft.copy(foundationCourseBatch = it) },
             label = { Text("Foundation Course batch") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
           )
           OutlinedTextField(
-            value = trainingGroup,
-            onValueChange = { trainingGroup = it },
+            value = draft.trainingGroup,
+            onValueChange = { draft = draft.copy(trainingGroup = it) },
             label = { Text("Training group") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
@@ -508,7 +593,7 @@ fun PersonEditScreen(
       Spacer(modifier = Modifier.height(8.dp))
       Button(
         onClick = ::performSave,
-        enabled = !isSaving && isInitialized,
+        enabled = !isSaving && draft.isInitialized,
         modifier = Modifier.fillMaxWidth(),
       ) {
         Text(if (profileId == null) "Save person" else "Save changes")
@@ -555,7 +640,7 @@ fun PersonEditScreen(
           TextButton(
             onClick = {
               pendingDuplicate = null
-              onBack()
+              cancelAndCleanup()
             },
           ) {
             Text("Skip")

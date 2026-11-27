@@ -94,6 +94,14 @@ class LocalDirectoryRepository(
   private val mutex = Mutex()
   private val directoryFile = File(filesDir, "nexus_directory.enc")
   private val photosDir = File(filesDir, "photos")
+  internal var beforeSnapshotPersistHook: (() -> Unit)? = null
+
+  private data class ExportSnapshot(
+    val profiles: List<PersonProfile>,
+    val groups: List<ContactGroup>,
+    val ownerCard: OwnerCard,
+    val photos: Map<String, ByteArray>,
+  )
 
   private val initialSnapshot = loadInitialSnapshot()
   private val _profiles = MutableStateFlow(initialSnapshot.profiles.map { it.withSyncedPostings() })
@@ -406,15 +414,39 @@ class LocalDirectoryRepository(
   }
 
   override suspend fun exportBackup(password: String): ByteArray = withContext(ioDispatcher) {
-    val (currentProfiles, currentGroups, currentOwnerCard) = mutex.withLock {
-      Triple(_profiles.value, _groups.value, _ownerCard.value)
+    val snapshot = mutex.withLock {
+      val currentProfiles = _profiles.value
+      val capturedPhotos = linkedMapOf<String, ByteArray>()
+      for (profile in currentProfiles) {
+        val photoName = profile.photoFileName ?: continue
+        if (photoName in capturedPhotos) continue
+        val file = safePhotoFile(photoName)
+          ?: throw IllegalStateException("Invalid photo filename '$photoName' for ${profile.name}")
+        if (!file.exists()) {
+          throw IllegalStateException("Missing photo '$photoName' for ${profile.name}")
+        }
+        val decrypted = runCatching { crypto.decrypt(file.readBytes()) }.getOrElse { err ->
+          throw IllegalStateException("Unreadable photo '$photoName' for ${profile.name}", err)
+        }
+        if (decrypted.isEmpty()) {
+          throw IllegalStateException("Empty photo '$photoName' for ${profile.name}")
+        }
+        capturedPhotos[photoName] = decrypted
+      }
+      ExportSnapshot(
+        profiles = currentProfiles,
+        groups = _groups.value,
+        ownerCard = _ownerCard.value,
+        photos = capturedPhotos,
+      )
     }
+
     val manifest = BackupManifest(
       schemaVersion = DirectorySnapshot.CURRENT_SCHEMA_VERSION,
       createdAtEpochMs = System.currentTimeMillis(),
-      profiles = currentProfiles,
-      groups = currentGroups,
-      ownerCard = currentOwnerCard,
+      profiles = snapshot.profiles,
+      groups = snapshot.groups,
+      ownerCard = snapshot.ownerCard,
     )
     val zipBytes = ByteArrayOutputStream().use { baos ->
       ZipOutputStream(baos).use { zip ->
@@ -422,9 +454,7 @@ class LocalDirectoryRepository(
         zip.write(json.encodeToString(manifest).encodeToByteArray())
         zip.closeEntry()
 
-        for (profile in currentProfiles) {
-          val photoName = profile.photoFileName ?: continue
-          val photoBytes = loadPhotoBytes(photoName) ?: continue
+        for ((photoName, photoBytes) in snapshot.photos) {
           zip.putNextEntry(ZipEntry("$PHOTOS_PREFIX$photoName"))
           zip.write(photoBytes)
           zip.closeEntry()
@@ -496,30 +526,39 @@ class LocalDirectoryRepository(
   override suspend fun applyBackup(preview: BackupPreview): Unit = withContext(ioDispatcher) {
     mutex.withLock {
       val oldPhotos = _profiles.value.mapNotNull { it.photoFileName }.toSet()
-      val newPhotos = mutableSetOf<String>()
-      val writtenNow = mutableListOf<String>()
-      val syncedProfiles = preview.profiles.map { it.withSyncedPostings() }
+      val stagedByIncomingName = linkedMapOf<String, String>()
+      val stagedFiles = mutableListOf<String>()
 
       try {
-        for (profile in syncedProfiles) {
-          val photoName = profile.photoFileName ?: continue
-          val bytes = preview.photos[photoName]
-            ?: throw IllegalStateException("Missing photo bytes for $photoName")
-          writeEncryptedPhoto(photoName, bytes)
-          newPhotos += photoName
-          if (photoName !in oldPhotos) writtenNow += photoName
+        val candidateProfiles = preview.profiles.map { raw ->
+          val synced = raw.withSyncedPostings()
+          val incomingPhoto = synced.photoFileName
+          if (incomingPhoto == null) {
+            synced
+          } else {
+            val freshName = stagedByIncomingName[incomingPhoto] ?: run {
+              val bytes = preview.photos[incomingPhoto]
+                ?: throw IllegalStateException("Missing photo bytes for $incomingPhoto")
+              val generated = "${UUID.randomUUID()}.jpg"
+              writeEncryptedPhoto(generated, bytes)
+              stagedFiles += generated
+              stagedByIncomingName[incomingPhoto] = generated
+              generated
+            }
+            synced.copy(photoFileName = freshName)
+          }
         }
 
-        persistSnapshot(syncedProfiles, preview.groups, preview.ownerCard)
-        _profiles.value = syncedProfiles
+        persistSnapshot(candidateProfiles, preview.groups, preview.ownerCard)
+        _profiles.value = candidateProfiles
         _groups.value = preview.groups
         _ownerCard.value = preview.ownerCard
 
-        for (orphan in oldPhotos - newPhotos) {
-          deletePhotoFile(orphan)
+        for (obsolete in oldPhotos) {
+          deletePhotoFile(obsolete)
         }
       } catch (t: Throwable) {
-        for (staged in writtenNow) {
+        for (staged in stagedFiles) {
           deletePhotoFile(staged)
         }
         throw t
@@ -532,7 +571,6 @@ class LocalDirectoryRepository(
     keepDuplicateIds: Set<String>,
   ): MergeOutcome = withContext(ioDispatcher) {
     mutex.withLock {
-      val existingPhotos = _profiles.value.mapNotNull { it.photoFileName }.toSet()
       val outcome = RestoreMerger.computeMergeOutcome(
         localProfiles = _profiles.value,
         localGroups = _groups.value,
@@ -541,20 +579,28 @@ class LocalDirectoryRepository(
         keepDuplicateIds = keepDuplicateIds,
       )
 
-      val writtenNow = mutableListOf<String>()
+      val stagedByIncomingName = linkedMapOf<String, String>()
+      val stagedFiles = mutableListOf<String>()
       try {
-        for ((photoName, bytes) in outcome.photosToWrite) {
-          writeEncryptedPhoto(photoName, bytes)
-          if (photoName !in existingPhotos) writtenNow += photoName
+        for ((incomingPhotoName, bytes) in outcome.photosToWrite) {
+          val generated = "${UUID.randomUUID()}.jpg"
+          writeEncryptedPhoto(generated, bytes)
+          stagedFiles += generated
+          stagedByIncomingName[incomingPhotoName] = generated
         }
 
-        persistSnapshot(outcome.mergedProfiles, outcome.mergedGroups, outcome.mergedOwnerCard)
-        _profiles.value = outcome.mergedProfiles
+        val candidateProfiles = outcome.mergedProfiles.map { profile ->
+          val mapped = profile.photoFileName?.let { stagedByIncomingName[it] }
+          if (mapped != null) profile.copy(photoFileName = mapped) else profile
+        }
+
+        persistSnapshot(candidateProfiles, outcome.mergedGroups, outcome.mergedOwnerCard)
+        _profiles.value = candidateProfiles
         _groups.value = outcome.mergedGroups
         _ownerCard.value = outcome.mergedOwnerCard
-        outcome
+        outcome.copy(mergedProfiles = candidateProfiles)
       } catch (t: Throwable) {
-        for (staged in writtenNow) {
+        for (staged in stagedFiles) {
           deletePhotoFile(staged)
         }
         throw t
@@ -567,6 +613,7 @@ class LocalDirectoryRepository(
     groups: List<ContactGroup>,
     ownerCard: OwnerCard,
   ) {
+    beforeSnapshotPersistHook?.invoke()
     if (!filesDir.exists()) filesDir.mkdirs()
     val snapshot = DirectorySnapshot(
       schemaVersion = DirectorySnapshot.CURRENT_SCHEMA_VERSION,

@@ -514,7 +514,7 @@ class Phase2VerificationTest {
     assertEquals(emptyList<String>(), restored.tags)
     assertEquals(emptyList<Any>(), targetRepo.groups.value)
     assertEquals(OwnerCard(), targetRepo.ownerCard.value)
-    assertArrayEquals(phase1Photo, targetRepo.loadPhotoBytes("aditi.jpg"))
+    assertArrayEquals(phase1Photo, targetRepo.loadPhotoBytes(restored.photoFileName!!))
   }
 
   private class BitMatrixLuminanceSource(private val matrix: BitMatrix) :

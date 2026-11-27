@@ -138,14 +138,17 @@ fun SettingsScreen(
     scope.launch {
       runCatching {
         val encrypted = repository.exportBackup(password)
-        withContext(Dispatchers.IO) {
+        val readBack = withContext(Dispatchers.IO) {
           context.contentResolver.openOutputStream(uri)?.use { out ->
             out.write(encrypted)
             out.flush()
           } ?: error("Could not open destination file")
+          context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: error("Could not reopen saved backup for verification")
         }
-      }.onSuccess {
-        statusMessage = "Encrypted backup saved (${profiles.size} profiles)."
+        repository.inspectBackup(readBack, password)
+      }.onSuccess { preview ->
+        statusMessage = "Encrypted backup saved and verified (${preview.profiles.size} profiles)."
       }.onFailure { err ->
         errorMessage = err.message ?: "Failed to create backup."
       }

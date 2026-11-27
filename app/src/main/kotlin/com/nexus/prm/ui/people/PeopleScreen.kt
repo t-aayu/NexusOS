@@ -174,7 +174,7 @@ fun PeopleScreen(
           focusedBorderColor = MaterialTheme.colorScheme.primary,
           unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
         ),
-        placeholder = { Text("Search name, phone, batch, group, notes") },
+        placeholder = { Text("Search name, phone, email, role, location, group") },
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
         trailingIcon = {
           if (uiState.filter.query.isNotEmpty()) {
