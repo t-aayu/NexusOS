@@ -89,13 +89,14 @@ object OwnerCardVCard {
   }
 
   /**
-   * Builds a minimal vCard 3.0 payload for sharing a contact, intentionally omitting
-   * private fields (whereWeMet, otherDetails, tags, groups, photos, postings, introductions).
+   * Builds a vCard 3.0 payload for sharing a contact with all saved phone numbers and emails
+   * (including labels and primary preferences), intentionally omitting private fields
+   * (whereWeMet, otherDetails, tags, groups, photos, postings, introductions).
    */
   fun buildContactVCard(profile: PersonProfile): String {
     val name = profile.name.trim()
-    val phone = profile.phone.trim()
-    val email = profile.email.trim()
+    val phones = profile.resolvedPhones()
+    val emails = profile.resolvedEmails()
     return StringBuilder().apply {
       appendLine("BEGIN:VCARD")
       appendLine("VERSION:3.0")
@@ -103,15 +104,46 @@ object OwnerCardVCard {
         appendLine("FN:${escapeVCard(name)}")
         appendLine("N:;${escapeVCard(name)};;;")
       }
-      if (phone.isNotEmpty()) {
-        appendLine("TEL;TYPE=CELL:${escapeVCard(phone)}")
+      for (entry in phones) {
+        val types = mutableListOf("CELL")
+        when {
+          entry.label.equals(LabeledContactValue.LABEL_PERSONAL, ignoreCase = true) -> types += "HOME"
+          entry.label.equals(LabeledContactValue.LABEL_OFFICE, ignoreCase = true) -> types += "WORK"
+        }
+        if (entry.isPrimary) types += "PREF"
+        val customParam = if (
+          !entry.label.equals(LabeledContactValue.LABEL_PERSONAL, ignoreCase = true) &&
+          !entry.label.equals(LabeledContactValue.LABEL_OFFICE, ignoreCase = true)
+        ) {
+          ";X-NEXUS-LABEL=${escapeParam(entry.label)}"
+        } else {
+          ""
+        }
+        appendLine("TEL;TYPE=${types.joinToString(",")}$customParam:${escapeVCard(entry.value)}")
       }
-      if (email.isNotEmpty()) {
-        appendLine("EMAIL:${escapeVCard(email)}")
+      for (entry in emails) {
+        val types = mutableListOf("INTERNET")
+        when {
+          entry.label.equals(LabeledContactValue.LABEL_PERSONAL, ignoreCase = true) -> types += "HOME"
+          entry.label.equals(LabeledContactValue.LABEL_OFFICE, ignoreCase = true) -> types += "WORK"
+        }
+        if (entry.isPrimary) types += "PREF"
+        val customParam = if (
+          !entry.label.equals(LabeledContactValue.LABEL_PERSONAL, ignoreCase = true) &&
+          !entry.label.equals(LabeledContactValue.LABEL_OFFICE, ignoreCase = true)
+        ) {
+          ";X-NEXUS-LABEL=${escapeParam(entry.label)}"
+        } else {
+          ""
+        }
+        appendLine("EMAIL;TYPE=${types.joinToString(",")}$customParam:${escapeVCard(entry.value)}")
       }
       append("END:VCARD")
     }.toString()
   }
+
+  private fun escapeParam(value: String): String =
+    value.replace(";", " ").replace(":", " ").replace("\n", " ").trim()
 
   fun generateQrBitmap(payload: String, sizePx: Int = 640): Bitmap? {
     if (payload.isBlank()) return null

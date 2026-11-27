@@ -36,8 +36,9 @@ object CallerIdMatcher {
     if (incomingVariants.isEmpty()) return null
 
     val matches = profiles.filter { profile ->
-      val candidateVariants = canonicalPhoneVariants(profile.phone)
-      candidateVariants.any { it in incomingVariants }
+      profile.allPhoneValues().any { phoneValue ->
+        canonicalPhoneVariants(phoneValue).any { it in incomingVariants }
+      }
     }
     return if (matches.size == 1) matches.single() else null
   }

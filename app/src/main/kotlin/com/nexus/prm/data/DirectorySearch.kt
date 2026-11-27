@@ -19,9 +19,10 @@ object DirectorySearch {
     val trimmed = query.trim()
     if (trimmed.isEmpty()) return true
 
+    val allPhones = profile.allPhoneValues()
     val nonPhoneFields = buildList {
       add(profile.name)
-      add(profile.email)
+      addAll(profile.allEmailValues())
       add(profile.designation)
       add(profile.service)
       add(profile.cadre)
@@ -44,16 +45,17 @@ object DirectorySearch {
       }
     }
 
-    if (profile.phone.contains(trimmed, ignoreCase = true) ||
+    if (allPhones.any { it.contains(trimmed, ignoreCase = true) } ||
       nonPhoneFields.any { it.contains(trimmed, ignoreCase = true) }
     ) {
       return true
     }
 
-    if (isPhoneLikeQuery(trimmed) && profile.phone.isNotBlank()) {
+    if (isPhoneLikeQuery(trimmed) && allPhones.isNotEmpty()) {
       val queryDigits = normalizePhoneDigits(trimmed)
-      val phoneDigits = normalizePhoneDigits(profile.phone)
-      if (queryDigits.isNotEmpty() && phoneDigits.contains(queryDigits)) {
+      if (queryDigits.isNotEmpty() &&
+        allPhones.any { normalizePhoneDigits(it).contains(queryDigits) }
+      ) {
         return true
       }
     }

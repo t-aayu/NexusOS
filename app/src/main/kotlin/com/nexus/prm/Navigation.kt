@@ -15,6 +15,7 @@ import androidx.navigation3.ui.NavDisplay
 import com.nexus.prm.ui.groups.GroupsScreen
 import com.nexus.prm.ui.imports.ContactImportScreen
 import com.nexus.prm.ui.imports.CsvImportScreen
+import com.nexus.prm.ui.imports.QuickImportReviewScreen
 import com.nexus.prm.ui.people.PeopleScreen
 import com.nexus.prm.ui.people.PeopleViewModel
 import com.nexus.prm.ui.profile.PersonDetailScreen
@@ -26,6 +27,7 @@ import com.nexus.prm.ui.settings.SettingsScreen
 fun MainNavigation(
   quickCaptureToken: Int = 0,
   callerProfileEvent: Pair<Int, String>? = null,
+  quickImportEvent: Triple<Int, String?, String?>? = null,
 ) {
   val context = LocalContext.current
   val app = context.applicationContext as NexusApp
@@ -34,6 +36,7 @@ fun MainNavigation(
   val backStack = rememberNavBackStack(People)
   var handledQuickCaptureToken by rememberSaveable { mutableIntStateOf(0) }
   var handledCallerProfileToken by rememberSaveable { mutableIntStateOf(0) }
+  var handledQuickImportToken by rememberSaveable { mutableIntStateOf(0) }
 
   LaunchedEffect(quickCaptureToken) {
     if (quickCaptureToken > handledQuickCaptureToken) {
@@ -56,6 +59,18 @@ fun MainNavigation(
     }
   }
 
+  LaunchedEffect(quickImportEvent) {
+    if (quickImportEvent != null && quickImportEvent.first > handledQuickImportToken) {
+      handledQuickImportToken = quickImportEvent.first
+      backStack.add(
+        QuickImportReview(
+          initialText = quickImportEvent.second,
+          vCardUriString = quickImportEvent.third,
+        ),
+      )
+    }
+  }
+
   NavDisplay(
     backStack = backStack,
     onBack = { backStack.removeLastOrNull() },
@@ -70,6 +85,7 @@ fun MainNavigation(
           onOwnerCardClick = { backStack.add(OwnerCardRoute) },
           onImportContactsClick = { backStack.add(ContactImport) },
           onImportCsvClick = { backStack.add(CsvImport) },
+          onImportVCardClick = { backStack.add(QuickImportReview(openFilePickerOnStart = true)) },
           onManageGroupsClick = { backStack.add(Groups) },
         )
       }
@@ -120,6 +136,19 @@ fun MainNavigation(
           onImported = { summary ->
             Toast.makeText(context, summary, Toast.LENGTH_LONG).show()
             backStack.removeLastOrNull()
+          },
+        )
+      }
+      entry<QuickImportReview> { key ->
+        QuickImportReviewScreen(
+          repository = repository,
+          initialText = key.initialText,
+          vCardUriString = key.vCardUriString,
+          openFilePickerOnStart = key.openFilePickerOnStart,
+          onBack = { backStack.removeLastOrNull() },
+          onSaved = { savedId ->
+            backStack.removeLastOrNull()
+            backStack.add(PersonDetail(profileId = savedId))
           },
         )
       }

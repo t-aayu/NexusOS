@@ -357,13 +357,17 @@ class LocalDirectoryRepository(
         _customCategories.value.firstOrNull { it.equals(raw, ignoreCase = true) } ?: raw
       }
     }
+    val normalizedPhones = profile.resolvedPhones()
+    val normalizedEmails = profile.resolvedEmails()
     return profile.copy(
       name = trimmedName,
-      phone = profile.phone.trim(),
+      phone = normalizedPhones.firstOrNull { it.isPrimary }?.value.orEmpty(),
+      phones = normalizedPhones,
       category = matchedBuiltIn,
       customCategory = canonicalCustom,
       whereWeMet = profile.whereWeMet.trim(),
-      email = profile.email.trim(),
+      email = normalizedEmails.firstOrNull { it.isPrimary }?.value.orEmpty(),
+      emails = normalizedEmails,
       organisation = profile.organisation.trim(),
       designation = profile.designation.trim(),
       service = profile.service.trim(),

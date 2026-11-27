@@ -21,15 +21,30 @@ object DuplicateMatcher {
     email: String,
     candidates: List<PersonProfile>,
     excludeProfileId: String? = null,
+  ): DuplicateMatch? = findMatch(
+    phones = listOf(phone),
+    emails = listOf(email),
+    candidates = candidates,
+    excludeProfileId = excludeProfileId,
+  )
+
+  fun findMatch(
+    phones: List<String>,
+    emails: List<String>,
+    candidates: List<PersonProfile>,
+    excludeProfileId: String? = null,
   ): DuplicateMatch? {
-    val normPhone = normalizePhone(phone)
-    val normEmail = normalizeEmail(email)
-    if (normPhone.isEmpty() && normEmail.isEmpty()) return null
+    val normPhones = phones.map(::normalizePhone).filter { it.isNotEmpty() }.toSet()
+    val normEmails = emails.map(::normalizeEmail).filter { it.isNotEmpty() }.toSet()
+    if (normPhones.isEmpty() && normEmails.isEmpty()) return null
 
     for (candidate in candidates) {
       if (excludeProfileId != null && candidate.id == excludeProfileId) continue
-      val phoneMatches = normPhone.isNotEmpty() && normalizePhone(candidate.phone) == normPhone
-      val emailMatches = normEmail.isNotEmpty() && normalizeEmail(candidate.email) == normEmail
+      val candidatePhones = candidate.allPhoneValues().map(::normalizePhone).filter { it.isNotEmpty() }.toSet()
+      val candidateEmails = candidate.allEmailValues().map(::normalizeEmail).filter { it.isNotEmpty() }.toSet()
+
+      val phoneMatches = normPhones.isNotEmpty() && candidatePhones.any { it in normPhones }
+      val emailMatches = normEmails.isNotEmpty() && candidateEmails.any { it in normEmails }
       val field = when {
         phoneMatches && emailMatches -> DuplicateMatchField.PHONE_AND_EMAIL
         phoneMatches -> DuplicateMatchField.PHONE

@@ -34,9 +34,13 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.PhotoCamera
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -85,6 +89,7 @@ import com.nexus.prm.data.DirectoryRepository
 import com.nexus.prm.data.DirectorySearch
 import com.nexus.prm.data.DuplicateMatch
 import com.nexus.prm.data.DuplicateMatcher
+import com.nexus.prm.data.LabeledContactValue
 import com.nexus.prm.data.PersonCategory
 import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.data.PhotoUtils
@@ -98,6 +103,14 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 @Serializable
+data class ContactRowDraft(
+  val rowId: String = UUID.randomUUID().toString(),
+  val value: String = "",
+  val label: String = LabeledContactValue.DEFAULT_LABEL,
+  val isPrimary: Boolean = false,
+)
+
+@Serializable
 data class PersonEditDraft(
   val sessionId: String,
   val profileId: String? = null,
@@ -105,11 +118,13 @@ data class PersonEditDraft(
   val loadedExisting: PersonProfile? = null,
   val name: String = "",
   val phone: String = "",
+  val phoneRows: List<ContactRowDraft> = listOf(ContactRowDraft(isPrimary = true)),
   val category: PersonCategory? = null,
   val customCategory: String? = null,
   val categoryQuery: String = "",
   val whereWeMet: String = "",
   val email: String = "",
+  val emailRows: List<ContactRowDraft> = listOf(ContactRowDraft(isPrimary = true)),
   val organisation: String = "",
   val designation: String = "",
   val service: String = "",
@@ -131,12 +146,22 @@ data class PersonEditDraft(
       isInitialized = true,
       loadedExisting = existing,
       name = existing.name,
-      phone = existing.phone,
+      phone = existing.primaryPhone(),
+      phoneRows = ensureTrailingEmptyRow(
+        existing.resolvedPhones().map {
+          ContactRowDraft(value = it.value, label = it.label, isPrimary = it.isPrimary)
+        },
+      ),
       category = existing.category,
       customCategory = existing.customCategory,
       categoryQuery = existing.categoryLabel().orEmpty(),
       whereWeMet = existing.whereWeMet,
-      email = existing.email,
+      email = existing.primaryEmail(),
+      emailRows = ensureTrailingEmptyRow(
+        existing.resolvedEmails().map {
+          ContactRowDraft(value = it.value, label = it.label, isPrimary = it.isPrimary)
+        },
+      ),
       organisation = existing.organisation,
       designation = existing.designation,
       service = existing.service,
@@ -164,6 +189,17 @@ data class PersonEditDraft(
     private val json = Json {
       ignoreUnknownKeys = true
       encodeDefaults = true
+    }
+
+    fun ensureTrailingEmptyRow(rows: List<ContactRowDraft>): List<ContactRowDraft> {
+      val nonBlank = rows.filter { it.value.isNotBlank() }
+      val primaryIdx = nonBlank.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
+      val normalizedNonBlank = nonBlank.mapIndexed { idx, row ->
+        row.copy(isPrimary = idx == primaryIdx)
+      }
+      val existingTrailing = rows.lastOrNull()?.takeIf { it.value.isBlank() }
+        ?: ContactRowDraft(isPrimary = normalizedNonBlank.isEmpty())
+      return normalizedNonBlank + existingTrailing.copy(isPrimary = normalizedNonBlank.isEmpty())
     }
 
     fun initialFor(profileId: String?): PersonEditDraft = PersonEditDraft(
@@ -300,14 +336,24 @@ fun PersonEditScreen(
         matchedSelectedLabel != null -> matchedSelectedLabel
         else -> draft.customCategory
       }
+      val normalizedPhones = PersonProfile.normalizeContactList(
+        raw = draft.phoneRows.map { LabeledContactValue(it.value, it.label, it.isPrimary) },
+        normalizer = DuplicateMatcher::normalizePhone,
+      )
+      val normalizedEmails = PersonProfile.normalizeContactList(
+        raw = draft.emailRows.map { LabeledContactValue(it.value, it.label, it.isPrimary) },
+        normalizer = DuplicateMatcher::normalizeEmail,
+      )
       val profile = PersonProfile(
         id = base?.id ?: UUID.randomUUID().toString(),
         name = trimmedName,
-        phone = draft.phone,
+        phone = normalizedPhones.firstOrNull { it.isPrimary }?.value.orEmpty(),
+        phones = normalizedPhones,
         category = resolvedBuiltIn,
         customCategory = resolvedCustom,
         whereWeMet = draft.whereWeMet,
-        email = draft.email,
+        email = normalizedEmails.firstOrNull { it.isPrimary }?.value.orEmpty(),
+        emails = normalizedEmails,
         organisation = draft.organisation,
         designation = draft.designation,
         service = draft.service,
@@ -343,8 +389,8 @@ fun PersonEditScreen(
     }
     if (isSaving) return
     val match = DuplicateMatcher.findMatch(
-      phone = draft.phone,
-      email = draft.email,
+      phones = draft.phoneRows.map { it.value },
+      emails = draft.emailRows.map { it.value },
       candidates = allProfiles,
       excludeProfileId = profileId,
     )
@@ -454,19 +500,34 @@ fun PersonEditScreen(
           .bringIntoViewOnFocus(),
       )
 
-      OutlinedTextField(
-        value = draft.phone,
-        onValueChange = { draft = draft.copy(phone = it) },
-        label = { Text("Phone") },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(
-          keyboardType = KeyboardType.Phone,
-          imeAction = ImeAction.Next,
-        ),
-        keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
-        modifier = Modifier
-          .fillMaxWidth()
-          .bringIntoViewOnFocus(),
+      MultiContactSection(
+        title = "Phone numbers",
+        fieldLabel = "Phone",
+        rows = draft.phoneRows,
+        keyboardType = KeyboardType.Phone,
+        onRowsChanged = { updated ->
+          val synced = PersonEditDraft.ensureTrailingEmptyRow(updated)
+          draft = draft.copy(
+            phoneRows = synced,
+            phone = synced.firstOrNull { it.value.isNotBlank() && it.isPrimary }?.value.orEmpty(),
+          )
+        },
+        onNext = { focusManager.moveFocus(FocusDirection.Down) },
+      )
+
+      MultiContactSection(
+        title = "Email addresses",
+        fieldLabel = "Email",
+        rows = draft.emailRows,
+        keyboardType = KeyboardType.Email,
+        onRowsChanged = { updated ->
+          val synced = PersonEditDraft.ensureTrailingEmptyRow(updated)
+          draft = draft.copy(
+            emailRows = synced,
+            email = synced.firstOrNull { it.value.isNotBlank() && it.isPrimary }?.value.orEmpty(),
+          )
+        },
+        onNext = { focusManager.moveFocus(FocusDirection.Down) },
       )
 
       val trimmedCategoryQuery = draft.categoryQuery.trim()
@@ -680,15 +741,6 @@ fun PersonEditScreen(
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
           val nextFocusAction = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) })
           OutlinedTextField(
-            value = draft.email,
-            onValueChange = { draft = draft.copy(email = it) },
-            label = { Text("Email") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
-            keyboardActions = nextFocusAction,
-            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
-          )
-          OutlinedTextField(
             value = draft.organisation,
             onValueChange = { draft = draft.copy(organisation = it) },
             label = { Text("Organisation") },
@@ -842,4 +894,168 @@ private fun Modifier.bringIntoViewOnFocus(): Modifier = composed {
         }
       }
     }
+}
+
+@Composable
+private fun MultiContactSection(
+  title: String,
+  fieldLabel: String,
+  rows: List<ContactRowDraft>,
+  keyboardType: KeyboardType,
+  onRowsChanged: (List<ContactRowDraft>) -> Unit,
+  onNext: () -> Unit,
+) {
+  var customLabelTargetRowId by remember { mutableStateOf<String?>(null) }
+  var customLabelInput by remember { mutableStateOf("") }
+
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Text(
+      text = title,
+      style = MaterialTheme.typography.labelLarge,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
+    rows.forEachIndexed { index, row ->
+      androidx.compose.runtime.key(row.rowId) {
+        var labelMenuExpanded by remember { mutableStateOf(false) }
+        val isNonBlank = row.value.isNotBlank()
+        val isOnlyTrailingEmpty = !isNonBlank && index == rows.lastIndex
+
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            OutlinedTextField(
+              value = row.value,
+              onValueChange = { newValue ->
+                val updated = rows.map {
+                  if (it.rowId == row.rowId) it.copy(value = newValue) else it
+                }
+                onRowsChanged(updated)
+              },
+              label = { Text(if (isOnlyTrailingEmpty) "Add $fieldLabel" else fieldLabel) },
+              singleLine = true,
+              keyboardOptions = KeyboardOptions(
+                keyboardType = keyboardType,
+                imeAction = ImeAction.Next,
+              ),
+              keyboardActions = KeyboardActions(onNext = { onNext() }),
+              modifier = Modifier
+                .weight(1f)
+                .bringIntoViewOnFocus(),
+            )
+            if (isNonBlank) {
+              IconButton(
+                onClick = {
+                  val updated = rows.map {
+                    it.copy(isPrimary = it.rowId == row.rowId)
+                  }
+                  onRowsChanged(updated)
+                },
+              ) {
+                Icon(
+                  imageVector = if (row.isPrimary) Icons.Filled.Star else Icons.Outlined.StarOutline,
+                  contentDescription = if (row.isPrimary) "Primary $fieldLabel" else "Mark primary $fieldLabel",
+                  tint = if (row.isPrimary) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              }
+              IconButton(
+                onClick = {
+                  val remaining = rows.filterNot { it.rowId == row.rowId }
+                  onRowsChanged(remaining)
+                },
+              ) {
+                Icon(
+                  imageVector = Icons.Filled.Close,
+                  contentDescription = "Remove $fieldLabel",
+                )
+              }
+            }
+          }
+
+          if (isNonBlank) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              androidx.compose.foundation.layout.Box {
+                AssistChip(
+                  onClick = { labelMenuExpanded = true },
+                  label = { Text(row.label) },
+                )
+                DropdownMenu(
+                  expanded = labelMenuExpanded,
+                  onDismissRequest = { labelMenuExpanded = false },
+                ) {
+                  LabeledContactValue.PRESET_LABELS.forEach { preset ->
+                    DropdownMenuItem(
+                      text = { Text(preset) },
+                      onClick = {
+                        labelMenuExpanded = false
+                        onRowsChanged(
+                          rows.map { if (it.rowId == row.rowId) it.copy(label = preset) else it },
+                        )
+                      },
+                    )
+                  }
+                  DropdownMenuItem(
+                    text = { Text("Custom\u2026") },
+                    onClick = {
+                      labelMenuExpanded = false
+                      customLabelInput = if (row.label in LabeledContactValue.PRESET_LABELS) "" else row.label
+                      customLabelTargetRowId = row.rowId
+                    },
+                  )
+                }
+              }
+              if (row.isPrimary) {
+                Text(
+                  text = "Primary",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.primary,
+                  fontWeight = FontWeight.SemiBold,
+                )
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  customLabelTargetRowId?.let { targetId ->
+    AlertDialog(
+      onDismissRequest = { customLabelTargetRowId = null },
+      title = { Text("Custom label") },
+      text = {
+        OutlinedTextField(
+          value = customLabelInput,
+          onValueChange = { customLabelInput = it },
+          label = { Text("Label") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            val cleaned = customLabelInput.trim().ifEmpty { LabeledContactValue.DEFAULT_LABEL }
+            onRowsChanged(
+              rows.map { if (it.rowId == targetId) it.copy(label = cleaned) else it },
+            )
+            customLabelTargetRowId = null
+          },
+        ) {
+          Text("Save")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { customLabelTargetRowId = null }) {
+          Text("Cancel")
+        }
+      },
+    )
+  }
 }

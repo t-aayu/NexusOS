@@ -203,8 +203,10 @@ fun PersonDetailScreen(
             border = null,
           )
         }
-        val hasPhone = profile.phone.isNotBlank()
-        val hasEmail = profile.email.isNotBlank()
+        val primaryPhone = profile.primaryPhone()
+        val primaryEmail = profile.primaryEmail()
+        val hasPhone = primaryPhone.isNotBlank()
+        val hasEmail = primaryEmail.isNotBlank()
         if (hasPhone || hasEmail) {
           Spacer(modifier = Modifier.height(14.dp))
           Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -215,7 +217,7 @@ fun PersonDetailScreen(
                   contentColor = MaterialTheme.colorScheme.onPrimary,
                 ),
                 onClick = {
-                  val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(profile.phone)}"))
+                  val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(primaryPhone)}"))
                   runCatching { context.startActivity(intent) }.onFailure {
                     Toast.makeText(context, "No dialler app available", Toast.LENGTH_SHORT).show()
                   }
@@ -233,7 +235,7 @@ fun PersonDetailScreen(
                   contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                 ),
                 onClick = {
-                  val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:${Uri.encode(profile.email)}"))
+                  val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:${Uri.encode(primaryEmail)}"))
                   runCatching { context.startActivity(intent) }.onFailure {
                     Toast.makeText(context, "No email app available", Toast.LENGTH_SHORT).show()
                   }
@@ -248,17 +250,27 @@ fun PersonDetailScreen(
         }
       }
 
-      val quickDetails = listOfNotNull(
-        "Phone" to profile.phone,
-        "Where we met" to profile.whereWeMet,
-      ).filter { it.second.isNotBlank() }
+      val resolvedPhones = profile.resolvedPhones()
+      val resolvedEmails = profile.resolvedEmails()
+      val quickDetails = buildList {
+        resolvedPhones.forEach { entry ->
+          val suffix = if (entry.isPrimary && resolvedPhones.size > 1) "${entry.label} \u00B7 Primary" else entry.label
+          add("Phone ($suffix)" to entry.value)
+        }
+        resolvedEmails.forEach { entry ->
+          val suffix = if (entry.isPrimary && resolvedEmails.size > 1) "${entry.label} \u00B7 Primary" else entry.label
+          add("Email ($suffix)" to entry.value)
+        }
+        if (profile.whereWeMet.isNotBlank()) {
+          add("Where we met" to profile.whereWeMet)
+        }
+      }
 
       if (quickDetails.isNotEmpty()) {
         DetailSectionCard(title = "Contact & Context", rows = quickDetails)
       }
 
       val moreDetails = listOf(
-        "Email" to profile.email,
         "Organisation" to profile.organisation,
         "Designation" to profile.designation,
         "Service" to profile.service,

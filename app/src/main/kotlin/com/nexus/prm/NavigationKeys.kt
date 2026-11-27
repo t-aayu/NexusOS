@@ -18,6 +18,12 @@ import kotlinx.serialization.Serializable
 
 @Serializable data object CsvImport : NavKey
 
+@Serializable data class QuickImportReview(
+  val initialText: String? = null,
+  val vCardUriString: String? = null,
+  val openFilePickerOnStart: Boolean = false,
+) : NavKey
+
 @Serializable data object Groups : NavKey
 
 @Serializable data object OwnerCardRoute : NavKey

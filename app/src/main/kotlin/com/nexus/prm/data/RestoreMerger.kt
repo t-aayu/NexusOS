@@ -49,8 +49,8 @@ object RestoreMerger {
       }
 
       val dupMatch = DuplicateMatcher.findMatch(
-        phone = incoming.phone,
-        email = incoming.email,
+        phones = incoming.allPhoneValues(),
+        emails = incoming.allEmailValues(),
         candidates = localProfiles,
       )
       if (dupMatch != null) {
@@ -125,14 +125,27 @@ object RestoreMerger {
       val localIntroIds = local.introductions.map { it.id }.toSet()
       val mergedIntros = local.introductions + incoming.introductions.filter { it.id !in localIntroIds }
 
+      val mergedPhones = mergeContactEntries(
+        localEntries = local.resolvedPhones(),
+        incomingEntries = incoming.resolvedPhones(),
+        normalizer = DuplicateMatcher::normalizePhone,
+      )
+      val mergedEmails = mergeContactEntries(
+        localEntries = local.resolvedEmails(),
+        incomingEntries = incoming.resolvedEmails(),
+        normalizer = DuplicateMatcher::normalizeEmail,
+      )
+
       val hasLocalCategory = local.categoryLabel() != null
       val merged = local.copy(
         name = local.name.ifBlank { incoming.name },
-        phone = local.phone.ifBlank { incoming.phone },
+        phone = mergedPhones.firstOrNull { it.isPrimary }?.value ?: mergedPhones.firstOrNull()?.value.orEmpty(),
+        phones = mergedPhones,
         category = if (hasLocalCategory) local.category else incoming.category,
         customCategory = if (hasLocalCategory) local.customCategory else incoming.customCategory,
         whereWeMet = local.whereWeMet.ifBlank { incoming.whereWeMet },
-        email = local.email.ifBlank { incoming.email },
+        email = mergedEmails.firstOrNull { it.isPrimary }?.value ?: mergedEmails.firstOrNull()?.value.orEmpty(),
+        emails = mergedEmails,
         organisation = local.organisation.ifBlank { incoming.organisation },
         designation = local.designation.ifBlank { incoming.designation },
         service = local.service.ifBlank { incoming.service },
@@ -225,6 +238,25 @@ object RestoreMerger {
       photoAssignmentsByProfileId = photoAssignmentsByProfileId,
       mergedCustomCategories = mergedCustomCategories,
     )
+  }
+
+  private fun mergeContactEntries(
+    localEntries: List<LabeledContactValue>,
+    incomingEntries: List<LabeledContactValue>,
+    normalizer: (String) -> String,
+  ): List<LabeledContactValue> {
+    if (localEntries.isEmpty()) return incomingEntries
+    val seen = localEntries.mapNotNull { entry ->
+      normalizer(entry.value).takeIf { it.isNotEmpty() }
+    }.toMutableSet()
+    val appended = mutableListOf<LabeledContactValue>()
+    for (entry in incomingEntries) {
+      val key = normalizer(entry.value)
+      if (key.isNotEmpty() && seen.add(key)) {
+        appended += entry.copy(isPrimary = false)
+      }
+    }
+    return localEntries + appended
   }
 
   fun hasOwnerCardContent(card: OwnerCard): Boolean =

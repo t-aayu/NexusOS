@@ -109,14 +109,30 @@ object PostingValidation {
 }
 
 @Serializable
+data class LabeledContactValue(
+  val value: String,
+  val label: String = DEFAULT_LABEL,
+  val isPrimary: Boolean = false,
+) {
+  companion object {
+    const val LABEL_PERSONAL = "Personal"
+    const val LABEL_OFFICE = "Office"
+    const val DEFAULT_LABEL = LABEL_PERSONAL
+    val PRESET_LABELS = listOf(LABEL_PERSONAL, LABEL_OFFICE)
+  }
+}
+
+@Serializable
 data class PersonProfile(
   val id: String,
   val name: String,
   val phone: String = "",
+  val phones: List<LabeledContactValue> = emptyList(),
   val category: PersonCategory? = null,
   val customCategory: String? = null,
   val whereWeMet: String = "",
   val email: String = "",
+  val emails: List<LabeledContactValue> = emptyList(),
   val organisation: String = "",
   val designation: String = "",
   val service: String = "",
@@ -136,9 +152,40 @@ data class PersonProfile(
   fun categoryLabel(): String? =
     customCategory?.trim()?.takeIf { it.isNotEmpty() } ?: category?.label
 
+  fun resolvedPhones(): List<LabeledContactValue> =
+    normalizeContactList(
+      raw = phones,
+      legacyFallback = phone,
+      normalizer = DuplicateMatcher::normalizePhone,
+    )
+
+  fun resolvedEmails(): List<LabeledContactValue> =
+    normalizeContactList(
+      raw = emails,
+      legacyFallback = email,
+      normalizer = DuplicateMatcher::normalizeEmail,
+    )
+
+  fun primaryPhone(): String =
+    resolvedPhones().firstOrNull { it.isPrimary }?.value
+      ?: resolvedPhones().firstOrNull()?.value.orEmpty()
+
+  fun primaryEmail(): String =
+    resolvedEmails().firstOrNull { it.isPrimary }?.value
+      ?: resolvedEmails().firstOrNull()?.value.orEmpty()
+
+  fun allPhoneValues(): List<String> = resolvedPhones().map { it.value }
+
+  fun allEmailValues(): List<String> = resolvedEmails().map { it.value }
+
   fun currentPosting(): PostingEntry? = postings.firstOrNull { it.isCurrent }
 
   fun withSyncedPostings(): PersonProfile {
+    val normalizedPhones = resolvedPhones()
+    val normalizedEmails = resolvedEmails()
+    val syncedPhone = normalizedPhones.firstOrNull { it.isPrimary }?.value.orEmpty()
+    val syncedEmail = normalizedEmails.firstOrNull { it.isPrimary }?.value.orEmpty()
+
     val ensuredPostings = if (postings.isEmpty() && (organisation.isNotBlank() || designation.isNotBlank())) {
       listOf(
         PostingEntry(
@@ -154,12 +201,68 @@ data class PersonProfile(
     val current = ensuredPostings.firstOrNull { it.isCurrent }
     return if (current != null) {
       copy(
+        phone = syncedPhone,
+        phones = normalizedPhones,
+        email = syncedEmail,
+        emails = normalizedEmails,
         postings = ensuredPostings,
         organisation = current.organisation,
         designation = current.designation,
       )
     } else {
-      copy(postings = ensuredPostings)
+      copy(
+        phone = syncedPhone,
+        phones = normalizedPhones,
+        email = syncedEmail,
+        emails = normalizedEmails,
+        postings = ensuredPostings,
+      )
+    }
+  }
+
+  companion object {
+    fun normalizeContactList(
+      raw: List<LabeledContactValue>,
+      legacyFallback: String = "",
+      normalizer: (String) -> String,
+    ): List<LabeledContactValue> {
+      val source = if (raw.isEmpty() && legacyFallback.isNotBlank()) {
+        listOf(
+          LabeledContactValue(
+            value = legacyFallback.trim(),
+            label = LabeledContactValue.DEFAULT_LABEL,
+            isPrimary = true,
+          ),
+        )
+      } else {
+        raw
+      }
+
+      val deduped = mutableListOf<LabeledContactValue>()
+      val seenKeys = mutableMapOf<String, Int>()
+      for (item in source) {
+        val trimmedValue = item.value.trim()
+        if (trimmedValue.isEmpty()) continue
+        val trimmedLabel = item.label.trim().ifEmpty { LabeledContactValue.DEFAULT_LABEL }
+        val key = normalizer(trimmedValue).ifEmpty { trimmedValue.lowercase() }
+        val existingIdx = seenKeys[key]
+        if (existingIdx == null) {
+          seenKeys[key] = deduped.size
+          deduped += LabeledContactValue(
+            value = trimmedValue,
+            label = trimmedLabel,
+            isPrimary = item.isPrimary,
+          )
+        } else if (item.isPrimary && !deduped[existingIdx].isPrimary) {
+          deduped[existingIdx] = deduped[existingIdx].copy(isPrimary = true)
+        }
+      }
+
+      if (deduped.isEmpty()) return emptyList()
+      val primaryIdx = deduped.indexOfFirst { it.isPrimary }.takeIf { it >= 0 } ?: 0
+      return deduped.mapIndexed { idx, entry ->
+        entry.copy(isPrimary = idx == primaryIdx)
+      }
     }
   }
 }

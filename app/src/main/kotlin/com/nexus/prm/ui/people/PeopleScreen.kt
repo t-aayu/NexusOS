@@ -79,6 +79,7 @@ fun PeopleScreen(
   onOwnerCardClick: () -> Unit,
   onImportContactsClick: () -> Unit,
   onImportCsvClick: () -> Unit,
+  onImportVCardClick: () -> Unit,
   onManageGroupsClick: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -132,6 +133,13 @@ fun PeopleScreen(
                 onClick = {
                   moreMenuExpanded = false
                   onImportCsvClick()
+                },
+              )
+              DropdownMenuItem(
+                text = { Text("Import vCard") },
+                onClick = {
+                  moreMenuExpanded = false
+                  onImportVCardClick()
                 },
               )
               DropdownMenuItem(
