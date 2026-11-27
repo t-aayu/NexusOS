@@ -132,4 +132,91 @@ class DirectorySearchTest {
     )
     assertEquals(listOf("Public Health", "policy"), normalized)
   }
+
+  @Test
+  fun matchesQuery_multiWordAcrossFieldsAndExcludesPhoneFromMixedTextFallback() {
+    val priya = alice.copy(
+      id = "p1",
+      name = "Priya Nair",
+      phone = "+91 98111 20240",
+      service = "IPS",
+      cadre = "Assam",
+      serviceBatch = "2025",
+    )
+    val partial = alice.copy(
+      id = "p2",
+      name = "Priya Verma",
+      phone = "+91 98111 20241",
+      service = "IPS",
+      cadre = "Kerala",
+      serviceBatch = "2024",
+    )
+
+    // Matches all three words across fields regardless of order
+    assertTrue(DirectorySearch.matchesQuery(priya, "Priya IPS Assam"))
+    assertTrue(DirectorySearch.matchesQuery(priya, "Assam priya ips"))
+    // Missing one word is excluded
+    assertFalse(DirectorySearch.matchesQuery(partial, "Priya IPS Assam"))
+
+    // Mixed text query "IAS 2024" must not match phone digits "20240"
+    val iasWith2024InPhone = alice.copy(
+      id = "p3",
+      phone = "+91 98111 20240",
+      service = "IAS",
+      serviceBatch = "2026",
+    )
+    assertFalse(DirectorySearch.matchesQuery(iasWith2024InPhone, "IAS 2024"))
+    // Formatted phone search still works
+    assertTrue(DirectorySearch.matchesQuery(iasWith2024InPhone, "+91 98111-20240"))
+  }
+
+  @Test
+  fun filterAndSort_searchesCategoriesReusableGroupsPastPostingsAndIntroducers() {
+    val katiharOfficer = alice.copy(
+      id = "k1",
+      name = "Rohan Das",
+      category = null,
+      customCategory = "Heritage Walk Group",
+      postings = listOf(
+        PostingEntry(id = "old", organisation = "District Collectorate", designation = "SDM", location = "Katihar", isCurrent = false),
+        PostingEntry(id = "cur", organisation = "Secretariat", designation = "Joint Secretary", location = "Patna", isCurrent = true),
+      ),
+      introductions = listOf(
+        IntroductionRecord(id = "i1", introducerProfileId = "removed-id", introducerName = "Ravi Menon"),
+      ),
+    )
+    val typedIntro = bob.copy(
+      id = "k2",
+      name = "Neha Gupta",
+      introductions = listOf(
+        IntroductionRecord(id = "i2", introducerProfileId = null, introducerName = "Ravi Kumar"),
+      ),
+    )
+    val group = ContactGroup(
+      id = "g1",
+      name = "District Visit Team",
+      memberIds = listOf("k1"),
+      createdAtEpochMs = 10L,
+    )
+    val profiles = listOf(katiharOfficer, typedIntro)
+
+    // Built-in & custom categories
+    assertEquals(listOf("k2"), DirectorySearch.filterAndSort(profiles, "Faculty", null, null, false, false, allGroups = listOf(group)).map { it.id })
+    assertEquals(listOf("k1"), DirectorySearch.filterAndSort(profiles, "Heritage Walk", null, null, false, false, allGroups = listOf(group)).map { it.id })
+
+    // Reusable group name & rename
+    assertEquals(listOf("k1"), DirectorySearch.filterAndSort(profiles, "District Visit Team", null, null, false, false, allGroups = listOf(group)).map { it.id })
+    val renamed = group.copy(name = "Field Survey Squad")
+    assertTrue(DirectorySearch.filterAndSort(profiles, "District Visit Team", null, null, false, false, allGroups = listOf(renamed)).isEmpty())
+    assertEquals(listOf("k1"), DirectorySearch.filterAndSort(profiles, "Field Survey Squad", null, null, false, false, allGroups = listOf(renamed)).map { it.id })
+
+    // Past posting location
+    assertEquals(listOf("k1"), DirectorySearch.filterAndSort(profiles, "Katihar", null, null, false, false, allGroups = listOf(group)).map { it.id })
+
+    // Linked (even with removed profile) and typed introducer names
+    assertEquals(listOf("k1", "k2"), DirectorySearch.filterAndSort(profiles, "Ravi", null, null, false, false, allGroups = listOf(group)).map { it.id })
+
+    // Respects active filters
+    assertEquals(listOf("k1"), DirectorySearch.filterAndSort(profiles, "Ravi", null, null, true, false, allGroups = listOf(group)).map { it.id })
+  }
 }

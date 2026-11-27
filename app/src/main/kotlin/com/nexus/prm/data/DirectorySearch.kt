@@ -11,30 +11,41 @@ object DirectorySearch {
 
   private val PHONE_QUERY_CHARS = setOf('+', '-', '(', ')', ' ', '.')
 
-  fun matchesQuery(profile: PersonProfile, query: String): Boolean {
+  fun matchesQuery(
+    profile: PersonProfile,
+    query: String,
+    groupNames: List<String> = emptyList(),
+  ): Boolean {
     val trimmed = query.trim()
     if (trimmed.isEmpty()) return true
 
-    val textFields = listOf(
-      profile.name,
-      profile.phone,
-      profile.email,
-      profile.designation,
-      profile.currentPosting()?.location.orEmpty(),
-      profile.service,
-      profile.cadre,
-      profile.serviceBatch,
-      profile.foundationCourseBatch,
-      profile.organisation,
-      profile.trainingGroup,
-      profile.whereWeMet,
-      profile.categoryLabel().orEmpty(),
-    )
-    if (textFields.any { it.contains(trimmed, ignoreCase = true) }) {
-      return true
+    val nonPhoneFields = buildList {
+      add(profile.name)
+      add(profile.email)
+      add(profile.designation)
+      add(profile.service)
+      add(profile.cadre)
+      add(profile.serviceBatch)
+      add(profile.foundationCourseBatch)
+      add(profile.organisation)
+      add(profile.trainingGroup)
+      add(profile.whereWeMet)
+      add(profile.categoryLabel().orEmpty())
+      addAll(profile.tags)
+      addAll(groupNames)
+      for (posting in profile.postings) {
+        add(posting.organisation)
+        add(posting.designation)
+        add(posting.location)
+      }
+      for (intro in profile.introductions) {
+        add(intro.introducerName)
+      }
     }
 
-    if (profile.tags.any { it.contains(trimmed, ignoreCase = true) }) {
+    if (profile.phone.contains(trimmed, ignoreCase = true) ||
+      nonPhoneFields.any { it.contains(trimmed, ignoreCase = true) }
+    ) {
       return true
     }
 
@@ -46,8 +57,17 @@ object DirectorySearch {
       }
     }
 
+    val words = trimmed.split(WHITESPACE_REGEX).filter { it.isNotEmpty() }
+    if (words.size > 1) {
+      return words.all { word ->
+        nonPhoneFields.any { field -> field.contains(word, ignoreCase = true) }
+      }
+    }
+
     return false
   }
+
+  private val WHITESPACE_REGEX = Regex("\\s+")
 
   fun filterAndSort(
     profiles: List<PersonProfile>,
@@ -58,7 +78,19 @@ object DirectorySearch {
     recentlyAddedOnly: Boolean,
     selectedGroupMemberIds: Set<String>? = null,
     selectedCategoryLabel: String? = null,
+    allGroups: List<ContactGroup> = emptyList(),
   ): List<PersonProfile> {
+    val groupNamesByProfileId = if (allGroups.isEmpty()) {
+      emptyMap()
+    } else {
+      buildMap<String, MutableList<String>> {
+        for (group in allGroups) {
+          for (memberId in group.memberIds) {
+            getOrPut(memberId) { mutableListOf() }.add(group.name)
+          }
+        }
+      }
+    }
     val effectiveCategoryLabel = selectedCategoryLabel?.trim()?.takeIf { it.isNotEmpty() }
       ?: selectedCategory?.label
     val filtered = profiles.filter { profile ->
@@ -66,7 +98,7 @@ object DirectorySearch {
         (selectedTrainingGroup == null || profile.trainingGroup.trim().equals(selectedTrainingGroup, ignoreCase = true)) &&
         (selectedGroupMemberIds == null || profile.id in selectedGroupMemberIds) &&
         (!favouritesOnly || profile.isFavourite) &&
-        matchesQuery(profile, query)
+        matchesQuery(profile, query, groupNamesByProfileId[profile.id].orEmpty())
     }
 
     return if (recentlyAddedOnly) {

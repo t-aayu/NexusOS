@@ -73,6 +73,7 @@ class PeopleViewModel(
           recentlyAddedOnly = normalizedFilter.recentlyAddedOnly,
           selectedGroupMemberIds = activeReusableGroup?.memberIds?.toSet(),
           selectedCategoryLabel = normalizedFilter.selectedCategoryLabel,
+          allGroups = allGroups,
         ),
         availableCategories = availableCategories,
         trainingGroups = trainingGroups,
