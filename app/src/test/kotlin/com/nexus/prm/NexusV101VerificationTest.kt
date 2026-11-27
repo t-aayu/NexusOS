@@ -5,6 +5,7 @@ import com.nexus.prm.data.BackupDestination
 import com.nexus.prm.data.DirectorySearch
 import com.nexus.prm.data.LocalDirectoryRepository
 import com.nexus.prm.data.LocalStorageCrypto
+import com.nexus.prm.data.OwnerCard
 import com.nexus.prm.data.PersonCategory
 import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.data.PostingEntry
@@ -172,6 +173,91 @@ class NexusV101VerificationTest {
     assertEquals(1, reopenedAfterRepeat.profiles.value.size)
     assertEquals("Incoming Person", reopenedAfterRepeat.profiles.value.single().name)
     assertArrayEquals(incomingPhotoBytes, reopenedAfterRepeat.loadPhotoBytes(reopenedAfterRepeat.profiles.value.single().photoFileName!!))
+  }
+
+  @Test
+  fun NX101_02B_renameReturningFalseAfterCandidateWritePreservesAllStateAndAllowsRetry() = runTest {
+    val sourceRepo = newRepo()
+    val incomingPhotoBytes = byteArrayOf(88, 77, 66, 55)
+    sourceRepo.saveProfile(
+      profile = PersonProfile(
+        id = "incoming-2",
+        name = "Incoming Rename Test",
+        phone = "+91 90000 03003",
+        createdAtEpochMs = 200L,
+        updatedAtEpochMs = 200L,
+      ),
+      pendingPhotoBytes = incomingPhotoBytes,
+    )
+    val backupBytes = sourceRepo.exportBackup("RenamePass!")
+
+    val targetDir = tempFolder.newFolder("nx101_02b_target")
+    val targetRepo = newRepo(targetDir)
+    val livePhotoBytes = byteArrayOf(11, 22, 33, 44)
+    val liveProfile = targetRepo.saveProfile(
+      profile = PersonProfile(
+        id = "local-2",
+        name = "Local Original",
+        phone = "+91 90000 01001",
+        createdAtEpochMs = 100L,
+        updatedAtEpochMs = 100L,
+      ),
+      pendingPhotoBytes = livePhotoBytes,
+    )
+    val liveGroup = targetRepo.createGroup("Core Group")
+    targetRepo.setGroupMembers(liveGroup.id, listOf(liveProfile.id))
+    targetRepo.saveOwnerCard(OwnerCard(name = "Ayush Kumar", email = "ayush@example.com"))
+
+    val preview = targetRepo.inspectBackup(backupBytes, "RenamePass!")
+    var candidateExistedBeforeRename = false
+    targetRepo.commitRenamer = { source, destination ->
+      if (destination.name == "nexus_directory.enc") {
+        candidateExistedBeforeRename = source.exists() && source.length() > 0L
+        false
+      } else {
+        source.renameTo(destination)
+      }
+    }
+
+    // 1. Merge fails when final rename returns false
+    var mergeFailed = false
+    try {
+      targetRepo.applyMergeRestore(preview)
+    } catch (_: IOException) {
+      mergeFailed = true
+    }
+    assertTrue(mergeFailed)
+    assertTrue(candidateExistedBeforeRename)
+    assertFalse(File(targetDir, "nexus_directory.enc.tmp").exists())
+    assertEquals(1, File(targetDir, "photos").listFiles()?.size)
+
+    // 2. Full replacement fails when final rename returns false
+    candidateExistedBeforeRename = false
+    var replaceFailed = false
+    try {
+      targetRepo.applyBackup(preview)
+    } catch (_: IOException) {
+      replaceFailed = true
+    }
+    assertTrue(replaceFailed)
+    assertTrue(candidateExistedBeforeRename)
+    assertFalse(File(targetDir, "nexus_directory.enc.tmp").exists())
+    assertEquals(1, File(targetDir, "photos").listFiles()?.size)
+
+    // Reopen from disk and verify original profiles, photos, groups, and owner card are intact
+    val reopened = LocalDirectoryRepository(filesDir = targetDir, crypto = passthroughCrypto)
+    assertEquals(1, reopened.profiles.value.size)
+    assertEquals("Local Original", reopened.profiles.value.single().name)
+    assertArrayEquals(livePhotoBytes, reopened.loadPhotoBytes(liveProfile.photoFileName!!))
+    assertEquals(listOf("Core Group"), reopened.groups.value.map { it.name })
+    assertEquals("Ayush Kumar", reopened.ownerCard.value.name)
+
+    // Retry merge and full replacement after restoring default rename behavior
+    val mergeOutcome = reopened.applyMergeRestore(preview)
+    assertEquals(2, mergeOutcome.mergedProfiles.size)
+    reopened.applyBackup(preview)
+    assertEquals(1, reopened.profiles.value.size)
+    assertEquals("Incoming Rename Test", reopened.profiles.value.single().name)
   }
 
   @Test

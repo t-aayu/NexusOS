@@ -1,14 +1,10 @@
 package com.nexus.prm.data
 
-import android.annotation.SuppressLint
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
@@ -102,6 +98,29 @@ class LocalDirectoryRepository(
   private val photosDir = File(filesDir, "photos")
   internal var beforeSnapshotPersistHook: (() -> Unit)? = null
   internal var afterSnapshotWriteHook: (() -> Unit)? = null
+  internal var commitRenamer: (File, File) -> Boolean = { source, destination ->
+    if (source.renameTo(destination)) {
+      true
+    } else if (
+      destination.exists() &&
+      System.getProperty("os.name").orEmpty().contains("Windows", ignoreCase = true)
+    ) {
+      // Windows NTFS File.renameTo cannot replace an existing file; swap via .bak in local Windows JVM tests.
+      val backup = File(destination.parentFile, "${destination.name}.bak")
+      backup.delete()
+      if (!destination.renameTo(backup)) {
+        false
+      } else if (!source.renameTo(destination)) {
+        backup.renameTo(destination)
+        false
+      } else {
+        backup.delete()
+        true
+      }
+    } else {
+      false
+    }
+  }
 
   private data class ExportSnapshot(
     val profiles: List<PersonProfile>,
@@ -666,32 +685,12 @@ class LocalDirectoryRepository(
         out.fd.sync()
       }
       afterWriteHook?.invoke()
-      if (!tmp.renameTo(target)) {
-        moveReplaceAtomic(tmp, target)
+      if (!commitRenamer(tmp, target)) {
+        throw IOException("Failed to atomically commit ${target.name}")
       }
     } catch (t: Throwable) {
       runCatching { tmp.delete() }
       throw t
-    }
-  }
-
-  @SuppressLint("NewApi")
-  private fun moveReplaceAtomic(source: File, target: File) {
-    try {
-      Files.move(
-        source.toPath(),
-        target.toPath(),
-        StandardCopyOption.REPLACE_EXISTING,
-        StandardCopyOption.ATOMIC_MOVE,
-      )
-    } catch (_: AtomicMoveNotSupportedException) {
-      Files.move(
-        source.toPath(),
-        target.toPath(),
-        StandardCopyOption.REPLACE_EXISTING,
-      )
-    } catch (e: Exception) {
-      throw IOException("Failed to atomically commit ${target.name}", e)
     }
   }
 
