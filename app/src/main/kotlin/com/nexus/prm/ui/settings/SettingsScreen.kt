@@ -64,12 +64,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nexus.prm.data.AutoBackupManager
+import com.nexus.prm.data.BackupDestinationStatus
 import com.nexus.prm.data.BackupPreview
 import com.nexus.prm.data.CsvExporter
 import com.nexus.prm.data.DirectoryRepository
+import com.nexus.prm.data.FixedBackupLocation
 import com.nexus.prm.data.MergePreview
 import com.nexus.prm.data.RestoreMerger
 import com.nexus.prm.data.RestoreMode
+import com.nexus.prm.data.SafBackupDestination
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -182,25 +185,39 @@ fun SettingsScreen(
     }
   }
 
+  var showSetupBackupFolderGuide by remember { mutableStateOf(false) }
+
   val autoBackupTreeLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.OpenDocumentTree(),
   ) { uri: Uri? ->
     if (uri == null) return@rememberLauncherForActivityResult
+    val selectionKind = FixedBackupLocation.classifyTreeUri(uri)
+    if (selectionKind == FixedBackupLocation.SelectionKind.OTHER) {
+      statusMessage = null
+      errorMessage = "Please create or select ${FixedBackupLocation.FULL_DISPLAY_PATH} (or ${FixedBackupLocation.PARENT_FOLDER_NAME})."
+      return@rememberLauncherForActivityResult
+    }
     runCatching {
       context.contentResolver.takePersistableUriPermission(
         uri,
         Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
       )
     }
-    val displayName = DocumentFile.fromTreeUri(context, uri)?.name ?: uri.lastPathSegment ?: "Selected folder"
+    val accessible = SafBackupDestination(context, uri).isAccessible()
+    if (!accessible) {
+      statusMessage = null
+      errorMessage = "Could not access ${FixedBackupLocation.FULL_DISPLAY_PATH}. Please grant folder access and try again."
+      return@rememberLauncherForActivityResult
+    }
     scope.launch {
       autoBackupManager.configureSchedule(
         enabled = autoBackupSettings.enabled,
         destinationUri = uri,
-        destinationDisplayName = displayName,
+        destinationDisplayName = FixedBackupLocation.RELATIVE_PATH,
         password = null,
       )
-      statusMessage = "Automatic backup folder set to $displayName."
+      errorMessage = null
+      statusMessage = "Automatic backup folder ready: ${FixedBackupLocation.RELATIVE_PATH}."
     }
   }
 
@@ -423,18 +440,51 @@ fun SettingsScreen(
             )
           }
 
-          val hasAccess = remember(autoBackupSettings.destinationTreeUri) {
-            autoBackupManager.hasDestinationAccess()
+          val destinationStatus = remember(autoBackupSettings.destinationTreeUri) {
+            autoBackupManager.destinationStatus()
           }
-          val folderLabel = autoBackupSettings.destinationDisplayName ?: "Not selected"
-          Text(
-            text = "Destination: $folderLabel",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-          if (autoBackupSettings.destinationTreeUri != null && !hasAccess) {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
             Text(
-              text = "Destination access was lost. Please choose the folder again to grant access.",
+              text = "Destination: ${FixedBackupLocation.RELATIVE_PATH}",
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            when (destinationStatus) {
+              BackupDestinationStatus.SETUP_REQUIRED,
+              BackupDestinationStatus.LEGACY_OTHER_FOLDER,
+              -> {
+                Text(
+                  text = "Setup required",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.error,
+                  fontWeight = FontWeight.SemiBold,
+                )
+              }
+              BackupDestinationStatus.ACCESS_REQUIRED -> {
+                Text(
+                  text = "Access required",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.error,
+                  fontWeight = FontWeight.SemiBold,
+                )
+              }
+              BackupDestinationStatus.READY -> Unit
+            }
+          }
+          if (destinationStatus == BackupDestinationStatus.LEGACY_OTHER_FOLDER) {
+            Text(
+              text = "Your previous automatic backups used a different folder. Set up ${FixedBackupLocation.FULL_DISPLAY_PATH} to resume scheduled backups; old files remain untouched.",
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.error,
+              fontWeight = FontWeight.Medium,
+            )
+          } else if (destinationStatus == BackupDestinationStatus.ACCESS_REQUIRED) {
+            Text(
+              text = "Access to ${FixedBackupLocation.FULL_DISPLAY_PATH} was lost. Set up the backup folder again to grant access.",
               style = MaterialTheme.typography.bodySmall,
               color = MaterialTheme.colorScheme.error,
               fontWeight = FontWeight.Medium,
@@ -464,10 +514,10 @@ fun SettingsScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
           ) {
             OutlinedButton(
-              onClick = { autoBackupTreeLauncher.launch(null) },
+              onClick = { showSetupBackupFolderGuide = true },
               modifier = Modifier.weight(1f),
             ) {
-              Text("Choose folder")
+              Text("Set up backup folder")
             }
             OutlinedButton(
               onClick = { showAutoBackupPasswordDialog = true },
@@ -491,10 +541,40 @@ fun SettingsScreen(
                 isWorking = false
               }
             },
-            enabled = !isWorking && autoBackupSettings.destinationTreeUri != null && autoBackupSettings.password.isNotEmpty(),
+            enabled = !isWorking &&
+              destinationStatus == BackupDestinationStatus.READY &&
+              autoBackupSettings.password.isNotEmpty(),
             modifier = Modifier.fillMaxWidth(),
           ) {
             Text("Run backup now")
+          }
+          if (showSetupBackupFolderGuide) {
+            AlertDialog(
+              onDismissRequest = { showSetupBackupFolderGuide = false },
+              title = { Text("Set up backup folder") },
+              text = {
+                Text(
+                  "In the folder picker, create or open ${FixedBackupLocation.FULL_DISPLAY_PATH} " +
+                    "(or select ${FixedBackupLocation.PARENT_FOLDER_NAME} and NexusOS will create its " +
+                    "${FixedBackupLocation.BACKUP_FOLDER_NAME} subfolder), then tap Use this folder.",
+                )
+              },
+              confirmButton = {
+                Button(
+                  onClick = {
+                    showSetupBackupFolderGuide = false
+                    autoBackupTreeLauncher.launch(FixedBackupLocation.initialPickerUri())
+                  },
+                ) {
+                  Text("Continue")
+                }
+              },
+              dismissButton = {
+                TextButton(onClick = { showSetupBackupFolderGuide = false }) {
+                  Text("Cancel")
+                }
+              },
+            )
           }
         }
       }

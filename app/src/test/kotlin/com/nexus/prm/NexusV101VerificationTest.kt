@@ -3,6 +3,7 @@ package com.nexus.prm
 import com.nexus.prm.data.AutoBackupRunner
 import com.nexus.prm.data.BackupDestination
 import com.nexus.prm.data.DirectorySearch
+import com.nexus.prm.data.FixedBackupLocation
 import com.nexus.prm.data.LocalDirectoryRepository
 import com.nexus.prm.data.LocalStorageCrypto
 import com.nexus.prm.data.OwnerCard
@@ -470,5 +471,31 @@ class NexusV101VerificationTest {
     assertEquals("Second Person", otherDraft.name)
     assertNotNull(otherDraft.sessionId)
     assertFalse(otherDraft.sessionId == userEdited.sessionId)
+  }
+
+  @Test
+  fun fixedBackupLocation_classifiesNexusOsBackupParentAndOtherFolders() {
+    assertEquals(
+      FixedBackupLocation.SelectionKind.BACKUP_FOLDER,
+      FixedBackupLocation.classifyDocumentId("primary:NexusOS/Backup"),
+    )
+    assertEquals(
+      FixedBackupLocation.SelectionKind.BACKUP_FOLDER,
+      FixedBackupLocation.classifyDocumentId("primary:nexusos/backup/"),
+    )
+    assertEquals(
+      FixedBackupLocation.SelectionKind.PARENT_FOLDER,
+      FixedBackupLocation.classifyDocumentId("primary:NexusOS"),
+    )
+    assertEquals(
+      FixedBackupLocation.SelectionKind.OTHER,
+      FixedBackupLocation.classifyDocumentId("primary:Download"),
+    )
+    assertEquals(
+      FixedBackupLocation.SelectionKind.OTHER,
+      FixedBackupLocation.classifyDocumentId("1234-5678:NexusOS/Backup"),
+    )
+    assertFalse(AutoBackupRunner.isScheduledBackupFileName("manual-backup.nxbk"))
+    assertTrue(AutoBackupRunner.isScheduledBackupFileName("nexus-auto-20261127-140000-000.nxbk"))
   }
 }

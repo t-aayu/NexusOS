@@ -2,6 +2,7 @@ package com.nexus.prm.data
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -41,6 +42,53 @@ data class ScheduledBackupFile(
   val name: String,
 )
 
+enum class BackupDestinationStatus {
+  READY,
+  SETUP_REQUIRED,
+  ACCESS_REQUIRED,
+  LEGACY_OTHER_FOLDER,
+}
+
+object FixedBackupLocation {
+  const val PARENT_FOLDER_NAME = "NexusOS"
+  const val BACKUP_FOLDER_NAME = "Backup"
+  const val RELATIVE_PATH = "NexusOS/Backup"
+  const val FULL_DISPLAY_PATH = "Internal storage/NexusOS/Backup"
+
+  enum class SelectionKind {
+    BACKUP_FOLDER,
+    PARENT_FOLDER,
+    OTHER,
+  }
+
+  fun classifyDocumentId(documentId: String?): SelectionKind {
+    if (documentId.isNullOrBlank()) return SelectionKind.OTHER
+    val colonIndex = documentId.indexOf(':')
+    if (colonIndex < 0) return SelectionKind.OTHER
+    val volume = documentId.substring(0, colonIndex)
+    if (!volume.equals("primary", ignoreCase = true)) return SelectionKind.OTHER
+    val relative = documentId.substring(colonIndex + 1).trim('/')
+    return when {
+      relative.equals(RELATIVE_PATH, ignoreCase = true) -> SelectionKind.BACKUP_FOLDER
+      relative.equals(PARENT_FOLDER_NAME, ignoreCase = true) -> SelectionKind.PARENT_FOLDER
+      else -> SelectionKind.OTHER
+    }
+  }
+
+  fun classifyTreeUri(treeUri: Uri): SelectionKind {
+    val docId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }.getOrNull()
+      ?: treeUri.lastPathSegment
+    return classifyDocumentId(docId)
+  }
+
+  fun initialPickerUri(): Uri? = runCatching {
+    DocumentsContract.buildDocumentUri(
+      "com.android.externalstorage.documents",
+      "primary:$RELATIVE_PATH",
+    )
+  }.getOrNull()
+}
+
 interface BackupDestination {
   fun isAccessible(): Boolean
   fun listScheduledFiles(): List<ScheduledBackupFile>
@@ -63,8 +111,28 @@ class SafBackupDestination(
 
   private fun rootDir(): DocumentFile? {
     if (!hasPersistedPermission()) return null
+    val selectionKind = FixedBackupLocation.classifyTreeUri(treeUri)
+    if (selectionKind == FixedBackupLocation.SelectionKind.OTHER) return null
     val doc = DocumentFile.fromTreeUri(context, treeUri) ?: return null
-    return if (doc.exists() && doc.isDirectory && doc.canWrite()) doc else null
+    if (!doc.exists() || !doc.isDirectory || !doc.canWrite()) return null
+
+    return when (selectionKind) {
+      FixedBackupLocation.SelectionKind.BACKUP_FOLDER -> doc
+      FixedBackupLocation.SelectionKind.PARENT_FOLDER -> {
+        val existing = doc.findFile(FixedBackupLocation.BACKUP_FOLDER_NAME)
+        val backupDir = when {
+          existing != null && existing.isDirectory -> existing
+          existing == null -> doc.createDirectory(FixedBackupLocation.BACKUP_FOLDER_NAME)
+          else -> null
+        }
+        if (backupDir != null && backupDir.exists() && backupDir.isDirectory && backupDir.canWrite()) {
+          backupDir
+        } else {
+          null
+        }
+      }
+      FixedBackupLocation.SelectionKind.OTHER -> null
+    }
   }
 
   override fun isAccessible(): Boolean = rootDir() != null
@@ -202,11 +270,21 @@ class AutoBackupManager(
     }.getOrElse { AutoBackupSettings() }
   }
 
-  fun hasDestinationAccess(): Boolean {
-    val uriStr = _settings.value.destinationTreeUri ?: return false
+  fun destinationStatus(): BackupDestinationStatus {
+    val uriStr = _settings.value.destinationTreeUri
+    if (uriStr.isNullOrBlank()) return BackupDestinationStatus.SETUP_REQUIRED
     val uri = Uri.parse(uriStr)
-    return SafBackupDestination(context, uri).isAccessible()
+    if (FixedBackupLocation.classifyTreeUri(uri) == FixedBackupLocation.SelectionKind.OTHER) {
+      return BackupDestinationStatus.LEGACY_OTHER_FOLDER
+    }
+    return if (SafBackupDestination(context, uri).isAccessible()) {
+      BackupDestinationStatus.READY
+    } else {
+      BackupDestinationStatus.ACCESS_REQUIRED
+    }
   }
+
+  fun hasDestinationAccess(): Boolean = destinationStatus() == BackupDestinationStatus.READY
 
   suspend fun configureSchedule(
     enabled: Boolean,
@@ -242,7 +320,14 @@ class AutoBackupManager(
       return@withContext Result.failure(IllegalStateException(failure))
     }
 
-    val destination = SafBackupDestination(context, Uri.parse(uriStr))
+    val uri = Uri.parse(uriStr)
+    if (FixedBackupLocation.classifyTreeUri(uri) == FixedBackupLocation.SelectionKind.OTHER) {
+      val failure = "Scheduled backups require ${FixedBackupLocation.FULL_DISPLAY_PATH}. Please set up the backup folder."
+      recordFailure(failure)
+      return@withContext Result.failure(IllegalStateException(failure))
+    }
+
+    val destination = SafBackupDestination(context, uri)
     val result = runner.execute(
       repository = repository,
       destination = destination,

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.ContactPage
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.Button
@@ -70,6 +71,7 @@ fun PeopleScreen(
   onAddClick: () -> Unit,
   onPersonClick: (String) -> Unit,
   onSettingsClick: () -> Unit,
+  onOwnerCardClick: () -> Unit,
   onImportContactsClick: () -> Unit,
   onImportCsvClick: () -> Unit,
   onManageGroupsClick: () -> Unit,
@@ -135,6 +137,13 @@ fun PeopleScreen(
                 },
               )
             }
+          }
+          IconButton(onClick = onOwnerCardClick) {
+            Icon(
+              imageVector = Icons.Outlined.ContactPage,
+              contentDescription = "My contact card",
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
           }
           IconButton(onClick = onSettingsClick) {
             Icon(

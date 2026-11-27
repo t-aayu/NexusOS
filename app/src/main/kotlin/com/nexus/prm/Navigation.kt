@@ -36,6 +36,7 @@ fun MainNavigation() {
           onAddClick = { backStack.add(PersonEdit(profileId = null)) },
           onPersonClick = { id -> backStack.add(PersonDetail(profileId = id)) },
           onSettingsClick = { backStack.add(Settings) },
+          onOwnerCardClick = { backStack.add(OwnerCardRoute) },
           onImportContactsClick = { backStack.add(ContactImport) },
           onImportCsvClick = { backStack.add(CsvImport) },
           onManageGroupsClick = { backStack.add(Groups) },
