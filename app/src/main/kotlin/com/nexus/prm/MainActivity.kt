@@ -15,8 +15,10 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nexus.prm.callerid.CallerIdUnlockActivity
 import com.nexus.prm.ui.theme.NexusTheme
+import com.nexus.prm.ui.theme.ThemePreferences
 import com.nexus.prm.widget.QuickCaptureWidgetProvider
 
 class MainActivity : ComponentActivity() {
@@ -32,7 +34,8 @@ class MainActivity : ComponentActivity() {
 
     enableEdgeToEdge()
     setContent {
-      NexusTheme {
+      val useWallpaperColors by ThemePreferences.useWallpaperColorsFlow(this).collectAsStateWithLifecycle()
+      NexusTheme(dynamicColor = useWallpaperColors) {
         Surface(
           modifier = Modifier.fillMaxSize(),
           color = MaterialTheme.colorScheme.background,

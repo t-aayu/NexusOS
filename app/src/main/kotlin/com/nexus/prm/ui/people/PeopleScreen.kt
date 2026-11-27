@@ -267,10 +267,10 @@ private fun FilterBar(
     containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
     labelColor = MaterialTheme.colorScheme.onSurface,
     iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-    selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
-    selectedLeadingIconColor = MaterialTheme.colorScheme.secondary,
-    selectedTrailingIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    selectedLeadingIconColor = MaterialTheme.colorScheme.primary,
+    selectedTrailingIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
   )
 
   LazyRow(

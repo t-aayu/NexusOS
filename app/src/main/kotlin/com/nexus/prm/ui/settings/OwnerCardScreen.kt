@@ -39,6 +39,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -104,9 +105,11 @@ fun OwnerCardScreen(
     ) {
       Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
+        colors = CardDefaults.cardColors(
+          containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+        ),
       ) {
         Column(
           modifier = Modifier
@@ -119,13 +122,21 @@ fun OwnerCardScreen(
             text = "QR Share Preview",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
           )
           if (qrBitmap != null) {
-            Image(
-              bitmap = qrBitmap,
-              contentDescription = "My contact card QR code",
-              modifier = Modifier.size(220.dp),
-            )
+            androidx.compose.material3.Surface(
+              shape = RoundedCornerShape(12.dp),
+              color = Color.White,
+            ) {
+              Image(
+                bitmap = qrBitmap,
+                contentDescription = "My contact card QR code",
+                modifier = Modifier
+                  .padding(12.dp)
+                  .size(210.dp),
+              )
+            }
             Column(
               modifier = Modifier.fillMaxWidth(),
               verticalArrangement = Arrangement.spacedBy(4.dp),

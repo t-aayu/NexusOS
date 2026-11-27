@@ -84,6 +84,7 @@ import com.nexus.prm.data.MergePreview
 import com.nexus.prm.data.RestoreMerger
 import com.nexus.prm.data.RestoreMode
 import com.nexus.prm.data.SafBackupDestination
+import com.nexus.prm.ui.theme.ThemePreferences
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -375,6 +376,58 @@ fun SettingsScreen(
             modifier = Modifier.padding(16.dp),
             color = MaterialTheme.colorScheme.onErrorContainer,
           )
+        }
+      }
+
+      // Appearance
+      val useWallpaperColors by ThemePreferences.useWallpaperColorsFlow(context).collectAsStateWithLifecycle()
+      val dynamicColorSupported = remember { ThemePreferences.isDynamicColorSupported() }
+      Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+      ) {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          Text(
+            text = "Appearance",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+          )
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text(
+                text = "Use wallpaper colours",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+              )
+              Text(
+                text = if (dynamicColorSupported) {
+                  "Follow your wallpaper palette instead of Nexus slate-blue."
+                } else {
+                  "Wallpaper colours require Android 12 or later; using Nexus slate-blue."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            }
+            Switch(
+              checked = useWallpaperColors && dynamicColorSupported,
+              enabled = dynamicColorSupported,
+              onCheckedChange = { enabled ->
+                ThemePreferences.setUseWallpaperColors(context, enabled)
+              },
+            )
+          }
         }
       }
 

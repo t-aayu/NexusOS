@@ -20,7 +20,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:text="Nexus Caller ID"
-            android:textColor="#B4C8E0"
+            android:textColor="#ABC7EB"
             android:textSize="11sp"
             android:textStyle="bold" />
 
@@ -31,7 +31,7 @@
             android:gravity="center"
             android:contentDescription="Dismiss caller card"
             android:text="✕"
-            android:textColor="#A8B7C9"
+            android:textColor="#E8EEF7"
             android:textSize="14sp"
             android:textStyle="bold" />
     </LinearLayout>
@@ -43,7 +43,7 @@
         android:layout_marginTop="2dp"
         android:ellipsize="end"
         android:maxLines="1"
-        android:textColor="#E4EAF2"
+        android:textColor="#E8EEF7"
         android:textSize="17sp"
         android:textStyle="bold" />
 
@@ -54,6 +54,6 @@
         android:layout_marginTop="2dp"
         android:ellipsize="end"
         android:maxLines="2"
-        android:textColor="#A8B7C9"
+        android:textColor="#C4D2E3"
         android:textSize="13sp" />
 </LinearLayout>
