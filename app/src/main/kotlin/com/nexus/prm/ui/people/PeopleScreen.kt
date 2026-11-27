@@ -29,9 +29,12 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.ContactPage
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -49,6 +52,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -75,6 +79,7 @@ fun PeopleScreen(
   viewModel: PeopleViewModel,
   onAddClick: () -> Unit,
   onPersonClick: (String) -> Unit,
+  onEditClick: (String) -> Unit,
   onSettingsClick: () -> Unit,
   onOwnerCardClick: () -> Unit,
   onImportContactsClick: () -> Unit,
@@ -85,6 +90,7 @@ fun PeopleScreen(
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
   var moreMenuExpanded by remember { mutableStateOf(false) }
+  var pendingDeleteProfile by remember { mutableStateOf<PersonProfile?>(null) }
 
   Scaffold(
     modifier = modifier.fillMaxSize(),
@@ -238,13 +244,34 @@ fun PeopleScreen(
               profile = profile,
               loadPhotoBytes = viewModel::loadPhotoBytes,
               onClick = { onPersonClick(profile.id) },
+              onEdit = { onEditClick(profile.id) },
               onShareContact = { ContactShareHelper.shareContact(context, profile) },
+              onDelete = { pendingDeleteProfile = profile },
               onToggleFavourite = { viewModel.toggleFavourite(profile.id) },
             )
           }
         }
       }
     }
+  }
+
+  pendingDeleteProfile?.let { target ->
+    AlertDialog(
+      onDismissRequest = { pendingDeleteProfile = null },
+      title = { Text("Delete ${target.name}?") },
+      text = { Text("This removes ${target.name} from Nexus.") },
+      confirmButton = {
+        Button(
+          onClick = {
+            pendingDeleteProfile = null
+            viewModel.deleteProfile(target.id)
+          },
+        ) { Text("Delete") }
+      },
+      dismissButton = {
+        TextButton(onClick = { pendingDeleteProfile = null }) { Text("Cancel") }
+      },
+    )
   }
 }
 
@@ -454,7 +481,9 @@ private fun PersonListCard(
   profile: PersonProfile,
   loadPhotoBytes: suspend (String) -> ByteArray?,
   onClick: () -> Unit,
+  onEdit: () -> Unit,
   onShareContact: () -> Unit,
+  onDelete: () -> Unit,
   onToggleFavourite: () -> Unit,
 ) {
   var menuExpanded by remember { mutableStateOf(false) }
@@ -538,11 +567,33 @@ private fun PersonListCard(
       containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
       DropdownMenuItem(
+        text = { Text("Edit") },
+        leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+        onClick = {
+          menuExpanded = false
+          onEdit()
+        },
+      )
+      DropdownMenuItem(
         text = { Text("Share contact") },
         leadingIcon = { Icon(Icons.Outlined.Share, contentDescription = null) },
         onClick = {
           menuExpanded = false
           onShareContact()
+        },
+      )
+      DropdownMenuItem(
+        text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+        leadingIcon = {
+          Icon(
+            Icons.Outlined.Delete,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+          )
+        },
+        onClick = {
+          menuExpanded = false
+          onDelete()
         },
       )
     }

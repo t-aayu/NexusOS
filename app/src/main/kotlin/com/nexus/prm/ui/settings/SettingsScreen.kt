@@ -11,21 +11,29 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.documentfile.provider.DocumentFile
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Visibility
@@ -84,7 +92,10 @@ import com.nexus.prm.data.MergePreview
 import com.nexus.prm.data.RestoreMerger
 import com.nexus.prm.data.RestoreMode
 import com.nexus.prm.data.SafBackupDestination
+import com.nexus.prm.ui.theme.AccentChoice
+import com.nexus.prm.ui.theme.ThemeMode
 import com.nexus.prm.ui.theme.ThemePreferences
+import com.nexus.prm.ui.theme.isEffectiveDark
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -99,7 +110,7 @@ private enum class FullReplaceConfirmationStep {
   SECOND,
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
   repository: DirectoryRepository,
@@ -380,8 +391,9 @@ fun SettingsScreen(
       }
 
       // Appearance
-      val useWallpaperColors by ThemePreferences.useWallpaperColorsFlow(context).collectAsStateWithLifecycle()
+      val appearance by ThemePreferences.settingsFlow(context).collectAsStateWithLifecycle()
       val dynamicColorSupported = remember { ThemePreferences.isDynamicColorSupported() }
+      val effectiveDark = isEffectiveDark(appearance.themeMode, isSystemInDarkTheme())
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -392,13 +404,84 @@ fun SettingsScreen(
           modifier = Modifier
             .fillMaxWidth()
             .padding(16.dp),
-          verticalArrangement = Arrangement.spacedBy(8.dp),
+          verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
           Text(
             text = "Appearance",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
           )
+
+          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+              text = "Theme",
+              style = MaterialTheme.typography.labelLarge,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FlowRow(
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+              verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+              ThemeMode.entries.forEach { mode ->
+                val selected = appearance.themeMode == mode
+                FilterChip(
+                  selected = selected,
+                  onClick = { ThemePreferences.setThemeMode(context, mode) },
+                  leadingIcon = if (selected) {
+                    { Icon(Icons.Filled.Check, contentDescription = null) }
+                  } else null,
+                  label = { Text(mode.label) },
+                )
+              }
+            }
+          }
+
+          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+              text = "Accent colour",
+              style = MaterialTheme.typography.labelLarge,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FlowRow(
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+              verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              val presetChoices = AccentChoice.entries.filter { it != AccentChoice.WALLPAPER }
+              presetChoices.forEach { choice ->
+                val selected = appearance.accentChoice == choice
+                val swatchColor = androidx.compose.ui.graphics.Color(
+                  if (effectiveDark) choice.previewDarkHex else choice.previewLightHex,
+                )
+                FilterChip(
+                  selected = selected,
+                  onClick = { ThemePreferences.setAccentChoice(context, choice) },
+                  leadingIcon = {
+                    Box(
+                      modifier = Modifier
+                        .size(18.dp)
+                        .background(swatchColor, CircleShape),
+                      contentAlignment = Alignment.Center,
+                    ) {
+                      if (selected) {
+                        Icon(
+                          imageVector = Icons.Filled.Check,
+                          contentDescription = null,
+                          tint = if (effectiveDark) {
+                            androidx.compose.ui.graphics.Color(0xFF10151D)
+                          } else {
+                            androidx.compose.ui.graphics.Color.White
+                          },
+                          modifier = Modifier.size(12.dp),
+                        )
+                      }
+                    }
+                  },
+                  label = { Text(choice.label) },
+                )
+              }
+            }
+          }
+
           Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -412,19 +495,22 @@ fun SettingsScreen(
               )
               Text(
                 text = if (dynamicColorSupported) {
-                  "Follow your wallpaper palette instead of Nexus slate-blue."
+                  "Override preset accent with your wallpaper palette."
                 } else {
-                  "Wallpaper colours require Android 12 or later; using Nexus slate-blue."
+                  "Wallpaper colours require Android 12 or later."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
             }
             Switch(
-              checked = useWallpaperColors && dynamicColorSupported,
+              checked = appearance.accentChoice == AccentChoice.WALLPAPER && dynamicColorSupported,
               enabled = dynamicColorSupported,
               onCheckedChange = { enabled ->
-                ThemePreferences.setUseWallpaperColors(context, enabled)
+                ThemePreferences.setAccentChoice(
+                  context,
+                  if (enabled) AccentChoice.WALLPAPER else AccentChoice.SLATE_BLUE,
+                )
               },
             )
           }

@@ -135,6 +135,12 @@ class PeopleViewModel(
     }
   }
 
+  fun deleteProfile(profileId: String) {
+    viewModelScope.launch {
+      repository.deleteProfile(profileId)
+    }
+  }
+
   suspend fun loadPhotoBytes(photoFileName: String): ByteArray? =
     repository.loadPhotoBytes(photoFileName)
 }

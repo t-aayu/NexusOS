@@ -6,7 +6,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -16,10 +18,14 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.app.NotificationCompat
+import androidx.core.graphics.ColorUtils
 import com.nexus.prm.MainActivity
 import com.nexus.prm.R
 import com.nexus.prm.data.PersonProfile
+import com.nexus.prm.ui.theme.ThemePreferences
+import com.nexus.prm.ui.theme.resolveNexusColorScheme
 import java.util.concurrent.atomic.AtomicBoolean
 
 object CallerIdOverlayManager {
@@ -104,19 +110,41 @@ object CallerIdOverlayManager {
     return runCatching {
       val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
       val root = LayoutInflater.from(context).inflate(R.layout.view_caller_id_card, null)
-      root.findViewById<TextView>(R.id.caller_id_name).text = name
+
+      val systemDark = (
+        context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        ) == Configuration.UI_MODE_NIGHT_YES
+      val settings = ThemePreferences.currentSettings(context)
+      val scheme = resolveNexusColorScheme(
+        context = context,
+        themeMode = settings.themeMode,
+        accentChoice = settings.accentChoice,
+        systemDark = systemDark,
+      )
+      (root.background as? GradientDrawable)?.apply {
+        setColor(ColorUtils.setAlphaComponent(scheme.surfaceContainerLow.toArgb(), 0xEB))
+        val strokePx = (1f * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        setStroke(strokePx, ColorUtils.setAlphaComponent(scheme.primary.toArgb(), 0x66))
+      }
+      root.findViewById<TextView>(R.id.caller_id_brand)?.setTextColor(scheme.primary.toArgb())
+      root.findViewById<TextView>(R.id.caller_id_name).apply {
+        text = name
+        setTextColor(scheme.onSurface.toArgb())
+      }
       val subView = root.findViewById<TextView>(R.id.caller_id_subtitle)
       if (subtitle.isNotEmpty()) {
         subView.visibility = View.VISIBLE
         subView.text = subtitle
+        subView.setTextColor(scheme.onSurfaceVariant.toArgb())
       } else {
         subView.visibility = View.GONE
       }
       root.setOnClickListener {
         onCardTapped(context, profileId)
       }
-      root.findViewById<View>(R.id.caller_id_dismiss).setOnClickListener {
-        dismiss(context)
+      root.findViewById<TextView>(R.id.caller_id_dismiss).apply {
+        setTextColor(scheme.onSurface.toArgb())
+        setOnClickListener { dismiss(context) }
       }
 
       val windowType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

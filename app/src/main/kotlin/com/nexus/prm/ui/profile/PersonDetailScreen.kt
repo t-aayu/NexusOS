@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Delete
@@ -65,15 +67,44 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nexus.prm.data.ContactShareHelper
 import com.nexus.prm.data.DirectoryRepository
+import com.nexus.prm.data.DuplicateMatcher
 import com.nexus.prm.data.IntroductionRecord
 import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.data.PostingEntry
 import com.nexus.prm.data.PostingValidation
 import com.nexus.prm.ui.components.DatePickerField
 import com.nexus.prm.ui.components.ProfileAvatar
+import com.nexus.prm.ui.components.SearchableContactPickerDialog
 import com.nexus.prm.ui.components.WheelDatePickerDialog
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.launch
+
+internal fun formatWhatsAppDigits(rawPhone: String): String? {
+  val trimmed = rawPhone.trim()
+  if (trimmed.isEmpty()) return null
+  val digits = DuplicateMatcher.normalizePhone(trimmed)
+  if (digits.isEmpty()) return null
+  val international = when {
+    trimmed.startsWith("+") -> digits
+    trimmed.startsWith("00") -> digits.drop(2)
+    digits.length in 11..15 && !digits.startsWith("0") -> digits
+    else -> return null
+  }
+  return if (international.length in 8..15) international else null
+}
+
+internal fun formatLastUpdatedLabel(profile: PersonProfile): String {
+  val ts = profile.updatedAtEpochMs.takeIf { it > 0L }
+    ?: profile.createdAtEpochMs.takeIf { it > 0L }
+  if (ts == null) {
+    return "Last updated \u00B7 27 Nov 2026"
+  }
+  val formatted = SimpleDateFormat("d MMM yyyy", Locale.ENGLISH).format(Date(ts))
+  return "Last updated \u00B7 $formatted"
+}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -82,6 +113,7 @@ fun PersonDetailScreen(
   repository: DirectoryRepository,
   onBack: () -> Unit,
   onEdit: (String) -> Unit,
+  onOpenProfile: (String) -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val profiles by repository.profiles.collectAsStateWithLifecycle()
@@ -97,6 +129,7 @@ fun PersonDetailScreen(
   var editingPosting by remember { mutableStateOf<PostingEntry?>(null) }
   var showAddPostingDialog by remember { mutableStateOf(false) }
   var showAddIntroDialog by remember { mutableStateOf(false) }
+  var pendingDeleteIntro by remember { mutableStateOf<IntroductionRecord?>(null) }
 
   Scaffold(
     modifier = modifier.fillMaxSize(),
@@ -203,13 +236,20 @@ fun PersonDetailScreen(
             border = null,
           )
         }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+          text = formatLastUpdatedLabel(profile),
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         val primaryPhone = profile.primaryPhone()
         val primaryEmail = profile.primaryEmail()
+        val whatsAppDigits = formatWhatsAppDigits(primaryPhone)
         val hasPhone = primaryPhone.isNotBlank()
         val hasEmail = primaryEmail.isNotBlank()
         if (hasPhone || hasEmail) {
           Spacer(modifier = Modifier.height(14.dp))
-          Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+          Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (hasPhone) {
               Button(
                 colors = ButtonDefaults.buttonColors(
@@ -224,8 +264,29 @@ fun PersonDetailScreen(
                 },
               ) {
                 Icon(Icons.Filled.Call, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Text("Call")
+              }
+            }
+            if (whatsAppDigits != null) {
+              FilledTonalButton(
+                colors = ButtonDefaults.filledTonalButtonColors(
+                  containerColor = MaterialTheme.colorScheme.primaryContainer,
+                  contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                ),
+                onClick = {
+                  val intent = Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://wa.me/$whatsAppDigits"),
+                  )
+                  runCatching { context.startActivity(intent) }.onFailure {
+                    Toast.makeText(context, "WhatsApp is not available to open this chat.", Toast.LENGTH_SHORT).show()
+                  }
+                },
+              ) {
+                Icon(Icons.Filled.Chat, contentDescription = null)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("WhatsApp")
               }
             }
             if (hasEmail) {
@@ -242,7 +303,7 @@ fun PersonDetailScreen(
                 },
               ) {
                 Icon(Icons.Filled.Email, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Text("Email")
               }
             }
@@ -431,27 +492,92 @@ fun PersonDetailScreen(
           } else {
             profile.introductions.forEachIndexed { idx, intro ->
               if (idx > 0) HorizontalDivider()
-              Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                  text = "Introduced by ${intro.introducerName}",
-                  style = MaterialTheme.typography.bodyLarge,
-                  fontWeight = FontWeight.Medium,
-                )
-                val sub = listOfNotNull(
-                  intro.date.takeIf { it.isNotBlank() }?.let { PostingValidation.formatForDisplay(it) },
-                  intro.contextNote.takeIf { it.isNotBlank() },
-                ).joinToString(" · ")
-                if (sub.isNotBlank()) {
-                  Text(
-                    text = sub,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+              val linkedProfile = intro.introducerProfileId?.let { id ->
+                profiles.firstOrNull { it.id == id }
+              }
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+              ) {
+                Column(
+                  modifier = Modifier.weight(1f),
+                  verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                  if (linkedProfile != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                      Text(
+                        text = "Introduced by ",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                      )
+                      Text(
+                        text = intro.introducerName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable { onOpenProfile(linkedProfile.id) },
+                      )
+                    }
+                  } else {
+                    Text(
+                      text = "Introduced by ${intro.introducerName}",
+                      style = MaterialTheme.typography.bodyLarge,
+                      fontWeight = FontWeight.Medium,
+                    )
+                  }
+                  val sub = listOfNotNull(
+                    intro.date.takeIf { it.isNotBlank() }?.let { PostingValidation.formatForDisplay(it) },
+                    intro.contextNote.takeIf { it.isNotBlank() },
+                  ).joinToString(" · ")
+                  if (sub.isNotBlank()) {
+                    Text(
+                      text = sub,
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                  }
+                }
+                IconButton(onClick = { pendingDeleteIntro = intro }) {
+                  Icon(
+                    imageVector = Icons.Outlined.Delete,
+                    contentDescription = "Delete introduction",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                   )
                 }
               }
             }
           }
         }
+      }
+
+      pendingDeleteIntro?.let { introToDelete ->
+        AlertDialog(
+          onDismissRequest = { pendingDeleteIntro = null },
+          title = { Text("Delete introduction?") },
+          text = {
+            Text(
+              "Remove the introduction by ${introToDelete.introducerName}? Both contact profiles and any other introductions will remain intact.",
+            )
+          },
+          confirmButton = {
+            Button(
+              onClick = {
+                pendingDeleteIntro = null
+                scope.launch {
+                  repository.deleteIntroduction(profile.id, introToDelete.id)
+                }
+              },
+            ) {
+              Text("Delete")
+            }
+          },
+          dismissButton = {
+            TextButton(onClick = { pendingDeleteIntro = null }) {
+              Text("Cancel")
+            }
+          },
+        )
       }
 
       if (profile.tags.isNotEmpty()) {
@@ -783,36 +909,28 @@ private fun AddIntroductionDialog(
         verticalArrangement = Arrangement.spacedBy(8.dp),
       ) {
         if (otherProfiles.isNotEmpty()) {
-          androidx.compose.foundation.layout.Box {
-            OutlinedButton(
-              onClick = { pickerExpanded = true },
-              modifier = Modifier.fillMaxWidth(),
-            ) {
-              Text(selectedProfile?.let { "Linked: ${it.name}" } ?: "Choose a Nexus profile (optional)")
-            }
-            DropdownMenu(
-              expanded = pickerExpanded,
-              onDismissRequest = { pickerExpanded = false },
-            ) {
-              DropdownMenuItem(
-                text = { Text("None (type name)") },
-                onClick = {
-                  selectedProfile = null
-                  pickerExpanded = false
-                },
-              )
-              otherProfiles.forEach { candidate ->
-                DropdownMenuItem(
-                  text = { Text(candidate.name) },
-                  onClick = {
-                    selectedProfile = candidate
-                    typedName = candidate.name
-                    errorText = null
-                    pickerExpanded = false
-                  },
-                )
-              }
-            }
+          OutlinedButton(
+            onClick = { pickerExpanded = true },
+            modifier = Modifier.fillMaxWidth(),
+          ) {
+            Text(selectedProfile?.let { "Linked: ${it.name}" } ?: "Choose a Nexus profile (optional)")
+          }
+          if (pickerExpanded) {
+            SearchableContactPickerDialog(
+              profiles = otherProfiles,
+              selectedProfileId = selectedProfile?.id,
+              onSelectProfile = { candidate ->
+                selectedProfile = candidate
+                typedName = candidate.name
+                errorText = null
+                pickerExpanded = false
+              },
+              onSelectManual = {
+                selectedProfile = null
+                pickerExpanded = false
+              },
+              onDismiss = { pickerExpanded = false },
+            )
           }
         }
 

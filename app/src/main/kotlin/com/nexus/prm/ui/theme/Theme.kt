@@ -1,28 +1,67 @@
 package com.nexus.prm.ui.theme
 
+import android.content.Context
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 
-private val DarkColorScheme = darkColorScheme(
-  primary = primaryDark,
-  onPrimary = onPrimaryDark,
-  primaryContainer = primaryContainerDark,
-  onPrimaryContainer = onPrimaryContainerDark,
-  secondary = secondaryDark,
-  onSecondary = onSecondaryDark,
-  secondaryContainer = secondaryContainerDark,
-  onSecondaryContainer = onSecondaryContainerDark,
-  tertiary = tertiaryDark,
-  onTertiary = onTertiaryDark,
-  tertiaryContainer = tertiaryContainerDark,
-  onTertiaryContainer = onTertiaryContainerDark,
+private data class AccentPalette(
+  val primary: Color,
+  val onPrimary: Color,
+  val primaryContainer: Color,
+  val onPrimaryContainer: Color,
+)
+
+private fun accentPaletteFor(choice: AccentChoice, isDark: Boolean): AccentPalette =
+  when (choice) {
+    AccentChoice.SLATE_BLUE, AccentChoice.WALLPAPER -> if (isDark) {
+      AccentPalette(primaryDark, onPrimaryDark, primaryContainerDark, onPrimaryContainerDark)
+    } else {
+      AccentPalette(primaryLight, onPrimaryLight, primaryContainerLight, onPrimaryContainerLight)
+    }
+    AccentChoice.TEAL -> if (isDark) {
+      AccentPalette(Color(0xFF7FD4C8), Color(0xFF08332E), Color(0xFF1C4A44), Color(0xFFD9F4F0))
+    } else {
+      AccentPalette(Color(0xFF1E6B63), Color(0xFFFFFFFF), Color(0xFFD0EFEA), Color(0xFF0B2926))
+    }
+    AccentChoice.INDIGO -> if (isDark) {
+      AccentPalette(Color(0xFFB8C3FF), Color(0xFF16235E), Color(0xFF2D3B78), Color(0xFFE4E8FF))
+    } else {
+      AccentPalette(Color(0xFF42539F), Color(0xFFFFFFFF), Color(0xFFE0E4FA), Color(0xFF141B3E))
+    }
+    AccentChoice.VIOLET -> if (isDark) {
+      AccentPalette(Color(0xFFD5B9FA), Color(0xFF381E5E), Color(0xFF4E3378), Color(0xFFEFE6FD))
+    } else {
+      AccentPalette(Color(0xFF6B4C9A), Color(0xFFFFFFFF), Color(0xFFEDE2FC), Color(0xFF271742))
+    }
+    AccentChoice.AMBER -> if (isDark) {
+      AccentPalette(Color(0xFFF5BF74), Color(0xFF452604), Color(0xFF62390A), Color(0xFFFCE8CC))
+    } else {
+      AccentPalette(Color(0xFF9A5B13), Color(0xFFFFFFFF), Color(0xFFFCE6C8), Color(0xFF361D03))
+    }
+  }
+
+private fun baseDarkColorScheme(accent: AccentPalette): ColorScheme = darkColorScheme(
+  primary = accent.primary,
+  onPrimary = accent.onPrimary,
+  primaryContainer = accent.primaryContainer,
+  onPrimaryContainer = accent.onPrimaryContainer,
+  secondary = accent.primary,
+  onSecondary = accent.onPrimary,
+  secondaryContainer = accent.primaryContainer,
+  onSecondaryContainer = accent.onPrimaryContainer,
+  tertiary = accent.primary,
+  onTertiary = accent.onPrimary,
+  tertiaryContainer = accent.primaryContainer,
+  onTertiaryContainer = accent.onPrimaryContainer,
   background = backgroundDark,
   onBackground = onBackgroundDark,
   surface = surfaceDark,
@@ -42,19 +81,19 @@ private val DarkColorScheme = darkColorScheme(
   onErrorContainer = onErrorContainerDark,
 )
 
-private val LightColorScheme = lightColorScheme(
-  primary = primaryLight,
-  onPrimary = onPrimaryLight,
-  primaryContainer = primaryContainerLight,
-  onPrimaryContainer = onPrimaryContainerLight,
-  secondary = secondaryLight,
-  onSecondary = onSecondaryLight,
-  secondaryContainer = secondaryContainerLight,
-  onSecondaryContainer = onSecondaryContainerLight,
-  tertiary = tertiaryLight,
-  onTertiary = onTertiaryLight,
-  tertiaryContainer = tertiaryContainerLight,
-  onTertiaryContainer = onTertiaryContainerLight,
+private fun baseLightColorScheme(accent: AccentPalette): ColorScheme = lightColorScheme(
+  primary = accent.primary,
+  onPrimary = accent.onPrimary,
+  primaryContainer = accent.primaryContainer,
+  onPrimaryContainer = accent.onPrimaryContainer,
+  secondary = accent.primary,
+  onSecondary = accent.onPrimary,
+  secondaryContainer = accent.primaryContainer,
+  onSecondaryContainer = accent.onPrimaryContainer,
+  tertiary = accent.primary,
+  onTertiary = accent.onPrimary,
+  tertiaryContainer = accent.primaryContainer,
+  onTertiaryContainer = accent.onPrimaryContainer,
   background = backgroundLight,
   onBackground = onBackgroundLight,
   surface = surfaceLight,
@@ -74,20 +113,58 @@ private val LightColorScheme = lightColorScheme(
   onErrorContainer = onErrorContainerLight,
 )
 
+fun isEffectiveDark(themeMode: ThemeMode, systemDark: Boolean): Boolean = when (themeMode) {
+  ThemeMode.SYSTEM -> systemDark
+  ThemeMode.LIGHT -> false
+  ThemeMode.DARK, ThemeMode.AMOLED -> true
+}
+
+fun ColorScheme.withAmoledSurfaces(): ColorScheme = copy(
+  background = Color.Black,
+  surface = Color(0xFF0C0F14),
+  surfaceVariant = Color(0xFF171E29),
+  surfaceContainerLowest = Color.Black,
+  surfaceContainerLow = Color(0xFF11161E),
+  surfaceContainer = Color(0xFF151B24),
+  surfaceContainerHigh = Color(0xFF1C2430),
+  surfaceContainerHighest = Color(0xFF242E3D),
+  outlineVariant = Color(0xFF2A3544),
+)
+
+fun resolveNexusColorScheme(
+  context: Context?,
+  themeMode: ThemeMode,
+  accentChoice: AccentChoice,
+  systemDark: Boolean,
+): ColorScheme {
+  val isDark = isEffectiveDark(themeMode, systemDark)
+  val baseScheme = if (
+    accentChoice == AccentChoice.WALLPAPER &&
+    context != null &&
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+  ) {
+    if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+  } else {
+    val accent = accentPaletteFor(accentChoice, isDark)
+    if (isDark) baseDarkColorScheme(accent) else baseLightColorScheme(accent)
+  }
+  return if (themeMode == ThemeMode.AMOLED) baseScheme.withAmoledSurfaces() else baseScheme
+}
+
 @Composable
 fun NexusTheme(
-  darkTheme: Boolean = isSystemInDarkTheme(),
-  dynamicColor: Boolean = false,
+  themeMode: ThemeMode = ThemeMode.SYSTEM,
+  accentChoice: AccentChoice = AccentChoice.SLATE_BLUE,
+  systemDark: Boolean = isSystemInDarkTheme(),
   content: @Composable () -> Unit,
 ) {
-  val colorScheme = when {
-    dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-      val context = LocalContext.current
-      if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-    }
-    darkTheme -> DarkColorScheme
-    else -> LightColorScheme
-  }
+  val context = LocalContext.current
+  val colorScheme = resolveNexusColorScheme(
+    context = context,
+    themeMode = themeMode,
+    accentChoice = accentChoice,
+    systemDark = systemDark,
+  )
 
   MaterialTheme(
     colorScheme = colorScheme,

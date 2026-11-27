@@ -14,6 +14,8 @@ import com.nexus.prm.data.QuickCaptureResult
 import com.nexus.prm.data.QuickImportParser
 import com.nexus.prm.ui.profile.ContactRowDraft
 import com.nexus.prm.ui.profile.PersonEditDraft
+import com.nexus.prm.ui.profile.formatLastUpdatedLabel
+import com.nexus.prm.ui.profile.formatWhatsAppDigits
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.zip.ZipEntry
@@ -221,5 +223,36 @@ class QuickImportAndMultiContactTest {
     assertTrue(QuickImportParser.parseSingleVCard(twoContact).isFailure)
     assertTrue(QuickImportParser.parseSingleVCard("NOT A VCARD").isFailure)
     assertTrue(QuickImportParser.parseSingleVCard("BEGIN:VCARD\nVERSION:3.0\nEND:VCARD").isFailure)
+  }
+
+  @Test
+  fun detailActions_deleteIntroductionWhatsAppDigitsAndLastUpdatedLabel() = runTest {
+    val repo = newRepo()
+    val introducer = repo.saveProfile(PersonProfile(id = "int-1", name = "Ravi", createdAtEpochMs = 100L, updatedAtEpochMs = 100L))
+    val target = repo.saveProfile(PersonProfile(id = "tgt-1", name = "Meera", createdAtEpochMs = 100L, updatedAtEpochMs = 100L))
+    repo.addIntroduction(target.id, com.nexus.prm.data.IntroductionRecord(id = "i1", introducerProfileId = introducer.id, introducerName = "Ravi"))
+    repo.addIntroduction(target.id, com.nexus.prm.data.IntroductionRecord(id = "i2", introducerProfileId = null, introducerName = "Guest"))
+
+    repo.deleteIntroduction(target.id, "i1")
+    val afterDelete = repo.getProfile(target.id)!!
+    assertEquals(1, afterDelete.introductions.size)
+    assertEquals("i2", afterDelete.introductions.single().id)
+    assertNotNull(repo.getProfile(introducer.id))
+
+    assertEquals("919876543210", formatWhatsAppDigits("+91 98765 43210"))
+    assertEquals("442079460958", formatWhatsAppDigits("0044 20 7946 0958"))
+    assertNull(formatWhatsAppDigits(""))
+    assertNull(formatWhatsAppDigits("12345"))
+    assertNull(formatWhatsAppDigits("9876543210"))
+    assertNull(formatWhatsAppDigits("09876543210"))
+
+    val legacy = PersonProfile(id = "leg", name = "Legacy", createdAtEpochMs = 0L, updatedAtEpochMs = 0L)
+    assertEquals("Last updated \u00B7 27 Nov 2026", formatLastUpdatedLabel(legacy))
+
+    val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+      set(2026, java.util.Calendar.NOVEMBER, 26, 12, 0, 0)
+    }
+    val dated = legacy.copy(updatedAtEpochMs = cal.timeInMillis)
+    assertEquals("Last updated \u00B7 26 Nov 2026", formatLastUpdatedLabel(dated))
   }
 }

@@ -74,6 +74,7 @@ interface DirectoryRepository {
   suspend fun addOrUpdatePosting(profileId: String, entry: PostingEntry)
   suspend fun setCurrentPosting(profileId: String, postingId: String)
   suspend fun addIntroduction(profileId: String, intro: IntroductionRecord)
+  suspend fun deleteIntroduction(profileId: String, introId: String)
 
   suspend fun createGroup(name: String): ContactGroup
   suspend fun renameGroup(groupId: String, newName: String)
@@ -334,6 +335,22 @@ class LocalDirectoryRepository(
         )
         val updatedProfile = target.copy(
           introductions = target.introductions + cleaned,
+          updatedAtEpochMs = System.currentTimeMillis(),
+        )
+        val updatedList = _profiles.value.map { if (it.id == profileId) updatedProfile else it }
+        persistSnapshot(updatedList, _groups.value, _ownerCard.value)
+        _profiles.value = updatedList
+      }
+    }
+
+  override suspend fun deleteIntroduction(profileId: String, introId: String): Unit =
+    withContext(ioDispatcher) {
+      mutex.withLock {
+        val target = _profiles.value.firstOrNull { it.id == profileId } ?: return@withLock
+        val remaining = target.introductions.filterNot { it.id == introId }
+        if (remaining.size == target.introductions.size) return@withLock
+        val updatedProfile = target.copy(
+          introductions = remaining,
           updatedAtEpochMs = System.currentTimeMillis(),
         )
         val updatedList = _profiles.value.map { if (it.id == profileId) updatedProfile else it }

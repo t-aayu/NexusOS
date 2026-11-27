@@ -81,6 +81,7 @@ fun MainNavigation(
           viewModel = peopleViewModel,
           onAddClick = { backStack.add(PersonEdit(profileId = null)) },
           onPersonClick = { id -> backStack.add(PersonDetail(profileId = id)) },
+          onEditClick = { id -> backStack.add(PersonEdit(profileId = id)) },
           onSettingsClick = { backStack.add(Settings) },
           onOwnerCardClick = { backStack.add(OwnerCardRoute) },
           onImportContactsClick = { backStack.add(ContactImport) },
@@ -95,6 +96,7 @@ fun MainNavigation(
           repository = repository,
           onBack = { backStack.removeLastOrNull() },
           onEdit = { id -> backStack.add(PersonEdit(profileId = id)) },
+          onOpenProfile = { id -> backStack.add(PersonDetail(profileId = id)) },
         )
       }
       entry<PersonEdit> { key ->

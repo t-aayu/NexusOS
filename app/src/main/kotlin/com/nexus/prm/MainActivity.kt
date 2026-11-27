@@ -1,15 +1,19 @@
 package com.nexus.prm
 
 import android.content.Intent
+import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -19,6 +23,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nexus.prm.callerid.CallerIdUnlockActivity
 import com.nexus.prm.ui.theme.NexusTheme
 import com.nexus.prm.ui.theme.ThemePreferences
+import com.nexus.prm.ui.theme.isEffectiveDark
 import com.nexus.prm.widget.QuickCaptureWidgetProvider
 
 class MainActivity : ComponentActivity() {
@@ -34,8 +39,24 @@ class MainActivity : ComponentActivity() {
 
     enableEdgeToEdge()
     setContent {
-      val useWallpaperColors by ThemePreferences.useWallpaperColorsFlow(this).collectAsStateWithLifecycle()
-      NexusTheme(dynamicColor = useWallpaperColors) {
+      val appearance by ThemePreferences.settingsFlow(this).collectAsStateWithLifecycle()
+      val systemDark = isSystemInDarkTheme()
+      val effectiveDark = isEffectiveDark(appearance.themeMode, systemDark)
+
+      SideEffect {
+        val barStyle = if (effectiveDark) {
+          SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+        } else {
+          SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT)
+        }
+        enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+      }
+
+      NexusTheme(
+        themeMode = appearance.themeMode,
+        accentChoice = appearance.accentChoice,
+        systemDark = systemDark,
+      ) {
         Surface(
           modifier = Modifier.fillMaxSize(),
           color = MaterialTheme.colorScheme.background,

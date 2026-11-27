@@ -146,8 +146,8 @@ data class PersonProfile(
   val introductions: List<IntroductionRecord> = emptyList(),
   val photoFileName: String? = null,
   val isFavourite: Boolean = false,
-  val createdAtEpochMs: Long,
-  val updatedAtEpochMs: Long,
+  val createdAtEpochMs: Long = 0L,
+  val updatedAtEpochMs: Long = 0L,
 ) {
   fun categoryLabel(): String? =
     customCategory?.trim()?.takeIf { it.isNotEmpty() } ?: category?.label
