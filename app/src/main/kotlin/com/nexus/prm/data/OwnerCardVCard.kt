@@ -142,14 +142,20 @@ object OwnerCardVCard {
     }.toString()
   }
 
+  fun buildOwnerShareText(card: OwnerCard): String =
+    buildOwnerShareText(buildPreview(card))
+
+  fun buildOwnerShareText(preview: OwnerCardSharePreview): String =
+    preview.lines.joinToString("\n") { (label, value) -> "$label: $value" }
+
   private fun escapeParam(value: String): String =
     value.replace(";", " ").replace(":", " ").replace("\n", " ").trim()
 
-  fun generateQrBitmap(payload: String, sizePx: Int = 640): Bitmap? {
+  fun generateQrBitmap(payload: String, sizePx: Int = 640, margin: Int = 1): Bitmap? {
     if (payload.isBlank()) return null
     val hints = mapOf(
       EncodeHintType.CHARACTER_SET to "UTF-8",
-      EncodeHintType.MARGIN to 1,
+      EncodeHintType.MARGIN to margin,
     )
     val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
     val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.RGB_565)

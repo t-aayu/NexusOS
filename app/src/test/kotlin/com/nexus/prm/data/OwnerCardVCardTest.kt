@@ -30,4 +30,24 @@ class OwnerCardVCardTest {
     assertFalse(preview.vCardPayload.contains("98765"))
     assertFalse(preview.vCardPayload.contains("Uttarakhand"))
   }
+
+  @Test
+  fun buildOwnerShareText_formatsOnlySelectedFields() {
+    val card = OwnerCard(
+      name = "Ayush Kumar",
+      phone = "+91 98765 43210",
+      email = "ayush@example.com",
+      service = "IAS",
+      shareName = true,
+      sharePhone = false,
+      shareEmail = true,
+      shareService = true,
+    )
+
+    val text = OwnerCardVCard.buildOwnerShareText(card)
+    assertEquals(
+      "Name: Ayush Kumar\nEmail: ayush@example.com\nService: IAS",
+      text,
+    )
+  }
 }
