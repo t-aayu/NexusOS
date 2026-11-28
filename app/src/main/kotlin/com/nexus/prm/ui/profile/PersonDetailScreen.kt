@@ -71,6 +71,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nexus.prm.data.ContactShareHelper
+import com.nexus.prm.data.CountryPreferences
 import com.nexus.prm.data.DirectoryRepository
 import com.nexus.prm.data.DuplicateMatcher
 import com.nexus.prm.data.IntroductionRecord
@@ -89,15 +90,24 @@ import java.util.Locale
 import java.util.UUID
 import kotlinx.coroutines.launch
 
-internal fun formatWhatsAppDigits(rawPhone: String): String? {
+internal fun formatWhatsAppDigits(
+  rawPhone: String,
+  defaultCountryCode: String? = null,
+): String? {
   val trimmed = rawPhone.trim()
   if (trimmed.isEmpty()) return null
   val digits = DuplicateMatcher.normalizePhone(trimmed)
   if (digits.isEmpty()) return null
+  val cleanCountryCode = defaultCountryCode?.filter { it.isDigit() }?.takeIf { it.isNotEmpty() }
   val international = when {
     trimmed.startsWith("+") -> digits
     trimmed.startsWith("00") -> digits.drop(2)
     digits.length in 11..15 && !digits.startsWith("0") -> digits
+    cleanCountryCode != null -> {
+      val national = digits.trimStart('0')
+      if (national.length < 6) return null
+      "$cleanCountryCode$national"
+    }
     else -> return null
   }
   return if (international.length in 8..15) international else null
@@ -261,9 +271,11 @@ fun PersonDetailScreen(
           }
         }
 
+        val defaultCountry by CountryPreferences.countryFlow(context).collectAsStateWithLifecycle()
+        val defaultCountryCode = defaultCountry?.dialCode
         val phones = profile.resolvedPhones()
         val emails = profile.resolvedEmails()
-        val whatsappPhones = phones.filter { formatWhatsAppDigits(it.value) != null }
+        val whatsappPhones = phones.filter { formatWhatsAppDigits(it.value, defaultCountryCode) != null }
         if (phones.isNotEmpty() || emails.isNotEmpty()) {
           Spacer(Modifier.height(8.dp))
           FlowRow(
@@ -282,7 +294,7 @@ fun PersonDetailScreen(
               whatsappPhones,
               chooseWhenMultiple = true,
             ) { number ->
-              formatWhatsAppDigits(number)?.let { digits ->
+              formatWhatsAppDigits(number, defaultCountryCode)?.let { digits ->
                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$digits"))
                 runCatching { context.startActivity(intent) }.onFailure {
                   Toast.makeText(context, "No app available to open this chat", Toast.LENGTH_SHORT).show()

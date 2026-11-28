@@ -245,6 +245,12 @@ class QuickImportAndMultiContactTest {
     assertNull(formatWhatsAppDigits("12345"))
     assertNull(formatWhatsAppDigits("9876543210"))
     assertNull(formatWhatsAppDigits("09876543210"))
+    assertEquals("919876543210", formatWhatsAppDigits("9876543210", defaultCountryCode = "91"))
+    assertEquals("919876543210", formatWhatsAppDigits("09876543210", defaultCountryCode = "91"))
+    assertEquals("919876543210", formatWhatsAppDigits("919876543210", defaultCountryCode = "91"))
+    assertEquals("12025550141", formatWhatsAppDigits("(202) 555-0141", defaultCountryCode = "1"))
+    assertEquals("442079460958", formatWhatsAppDigits("+44 20 7946 0958", defaultCountryCode = "91"))
+    assertNull(formatWhatsAppDigits("12345", defaultCountryCode = "91"))
 
     val legacy = PersonProfile(id = "leg", name = "Legacy", createdAtEpochMs = 0L, updatedAtEpochMs = 0L)
     assertEquals("Last updated \u00B7 27 Nov 2026", formatLastUpdatedLabel(legacy))
