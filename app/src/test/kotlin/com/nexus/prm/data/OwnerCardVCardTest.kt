@@ -2,10 +2,27 @@ package com.nexus.prm.data
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OwnerCardVCardTest {
+
+  @Test
+  fun shareableName_obeysNameSelectionForShareMetadata() {
+    val card = OwnerCard(name = " Private Name ", shareName = false)
+
+    assertEquals("", card.shareableName())
+    assertFalse(OwnerCardVCard.buildPreview(card).vCardPayload.contains("Private Name"))
+    assertEquals("Private Name", card.copy(shareName = true).shareableName())
+  }
+
+  @Test
+  fun generateQrBitmap_returnsNullForAnOversizedCard() {
+    val payload = OwnerCardVCard.buildPreview(OwnerCard(name = "x".repeat(4096))).vCardPayload
+
+    assertNull(OwnerCardVCard.generateQrBitmap(payload))
+  }
 
   @Test
   fun buildPreview_includesOnlySelectedNonBlankFields() {

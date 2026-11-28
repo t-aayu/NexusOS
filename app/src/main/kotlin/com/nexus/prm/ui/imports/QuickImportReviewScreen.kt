@@ -1,6 +1,7 @@
 package com.nexus.prm.ui.imports
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -65,6 +66,7 @@ import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.data.QuickCaptureResult
 import com.nexus.prm.data.QuickImportParser
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -108,7 +110,9 @@ fun QuickImportReviewScreen(
   var selectedExistingId by remember { mutableStateOf<String?>(null) }
   var pendingDuplicate by remember { mutableStateOf<DuplicateMatch?>(null) }
   var isSaving by remember { mutableStateOf(false) }
+  var saveError by remember { mutableStateOf<String?>(null) }
   var hasLaunchedPicker by remember { mutableStateOf(false) }
+  BackHandler(enabled = isSaving) {}
 
   val vCardPickerLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.OpenDocument(),
@@ -187,82 +191,92 @@ fun QuickImportReviewScreen(
     val newPhones = candidatePhones()
     val newEmails = candidateEmails()
     isSaving = true
+    saveError = null
     scope.launch {
-      if (targetMode == ImportTargetMode.CREATE_NEW) {
-        val now = System.currentTimeMillis()
-        val card = parsedVCard
-        val nameToSave = editableName.trim()
-        val created = repository.saveProfile(
-          PersonProfile(
-            id = UUID.randomUUID().toString(),
-            name = nameToSave,
-            phone = newPhones.firstOrNull { it.isPrimary }?.value ?: newPhones.firstOrNull()?.value.orEmpty(),
-            phones = newPhones,
-            email = newEmails.firstOrNull { it.isPrimary }?.value ?: newEmails.firstOrNull()?.value.orEmpty(),
-            emails = newEmails,
-            organisation = card?.organisation.orEmpty(),
-            designation = card?.designation.orEmpty(),
-            createdAtEpochMs = now,
-            updatedAtEpochMs = now,
-          ),
-        )
-        isSaving = false
-        onSaved(created.id)
-      } else {
-        val existing = allProfiles.firstOrNull { it.id == selectedExistingId }
-        if (existing == null) {
-          isSaving = false
-          return@launch
+      try {
+        val saved = if (targetMode == ImportTargetMode.CREATE_NEW) {
+          val now = System.currentTimeMillis()
+          val card = parsedVCard
+          val nameToSave = editableName.trim()
+          repository.saveProfile(
+            PersonProfile(
+              id = UUID.randomUUID().toString(),
+              name = nameToSave,
+              phone = newPhones.firstOrNull { it.isPrimary }?.value ?: newPhones.firstOrNull()?.value.orEmpty(),
+              phones = newPhones,
+              email = newEmails.firstOrNull { it.isPrimary }?.value ?: newEmails.firstOrNull()?.value.orEmpty(),
+              emails = newEmails,
+              organisation = card?.organisation.orEmpty(),
+              designation = card?.designation.orEmpty(),
+              createdAtEpochMs = now,
+              updatedAtEpochMs = now,
+            ),
+          )
+        } else {
+          val existing = allProfiles.firstOrNull { it.id == selectedExistingId }
+          if (existing == null) {
+            selectedExistingId = null
+            saveError = "That contact is no longer available. Choose another contact."
+            return@launch
+          }
+          val mergedPhones = appendUniqueContactEntries(
+            existing.resolvedPhones(),
+            newPhones,
+            DuplicateMatcher::normalizePhone,
+          )
+          val mergedEmails = appendUniqueContactEntries(
+            existing.resolvedEmails(),
+            newEmails,
+            DuplicateMatcher::normalizeEmail,
+          )
+          val card = parsedVCard
+          repository.saveProfile(
+            existing.copy(
+              phone = mergedPhones.firstOrNull { it.isPrimary }?.value ?: existing.primaryPhone(),
+              phones = mergedPhones,
+              email = mergedEmails.firstOrNull { it.isPrimary }?.value ?: existing.primaryEmail(),
+              emails = mergedEmails,
+              organisation = existing.organisation.ifBlank { card?.organisation.orEmpty() },
+              designation = existing.designation.ifBlank { card?.designation.orEmpty() },
+              updatedAtEpochMs = System.currentTimeMillis(),
+            ),
+          )
         }
-        val mergedPhones = appendUniqueContactEntries(
-          existing.resolvedPhones(),
-          newPhones,
-          DuplicateMatcher::normalizePhone,
-        )
-        val mergedEmails = appendUniqueContactEntries(
-          existing.resolvedEmails(),
-          newEmails,
-          DuplicateMatcher::normalizeEmail,
-        )
-        val card = parsedVCard
-        val updated = repository.saveProfile(
-          existing.copy(
-            phone = mergedPhones.firstOrNull { it.isPrimary }?.value ?: existing.primaryPhone(),
-            phones = mergedPhones,
-            email = mergedEmails.firstOrNull { it.isPrimary }?.value ?: existing.primaryEmail(),
-            emails = mergedEmails,
-            organisation = existing.organisation.ifBlank { card?.organisation.orEmpty() },
-            designation = existing.designation.ifBlank { card?.designation.orEmpty() },
-            updatedAtEpochMs = System.currentTimeMillis(),
-          ),
-        )
+        onSaved(saved.id)
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (_: Exception) {
+        saveError = "Could not save this import. Your changes are still here."
+      } finally {
         isSaving = false
-        onSaved(updated.id)
       }
     }
   }
 
-  fun performSave() {
-    if (isSaving) return
-    if (targetMode == ImportTargetMode.CREATE_NEW && editableName.trim().isEmpty()) {
-      return
-    }
-    if (targetMode == ImportTargetMode.ADD_TO_EXISTING && selectedExistingId == null) {
-      return
-    }
-
-    val excludeId = if (targetMode == ImportTargetMode.ADD_TO_EXISTING) selectedExistingId else null
-    val match = DuplicateMatcher.findMatch(
-      phones = candidatePhones().map { it.value },
-      emails = candidateEmails().map { it.value },
+  val importPhones = candidatePhones().map { it.value }
+  val importEmails = candidateEmails().map { it.value }
+  val excludeId = selectedExistingId.takeIf { targetMode == ImportTargetMode.ADD_TO_EXISTING }
+  val possibleDuplicate = remember(importPhones, importEmails, allProfiles, excludeId) {
+    DuplicateMatcher.findMatch(
+      phones = importPhones,
+      emails = importEmails,
       candidates = allProfiles,
       excludeProfileId = excludeId,
     )
-    if (match != null) {
-      pendingDuplicate = match
-      return
+  }
+  val canSave = !isSaving && when (targetMode) {
+    ImportTargetMode.CREATE_NEW -> editableName.isNotBlank() &&
+      (importPhones.isNotEmpty() || importEmails.isNotEmpty() || parsedVCard != null)
+    ImportTargetMode.ADD_TO_EXISTING -> allProfiles.any { it.id == selectedExistingId }
+  }
+
+  fun performSave() {
+    if (!canSave) return
+    if (possibleDuplicate != null) {
+      pendingDuplicate = possibleDuplicate
+    } else {
+      commitSave()
     }
-    commitSave()
   }
 
   Scaffold(
@@ -281,7 +295,7 @@ fun QuickImportReviewScreen(
           )
         },
         navigationIcon = {
-          IconButton(onClick = onBack) {
+          IconButton(onClick = onBack, enabled = !isSaving) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
           }
         },
@@ -312,7 +326,7 @@ fun QuickImportReviewScreen(
             Text("Pick another vCard")
           }
         }
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = onBack, enabled = !isSaving, modifier = Modifier.fillMaxWidth()) {
           Text("Cancel")
         }
       }
@@ -520,11 +534,11 @@ fun QuickImportReviewScreen(
       }
 
       Spacer(modifier = Modifier.height(8.dp))
-      val canSave = !isSaving && when (targetMode) {
-        ImportTargetMode.CREATE_NEW -> editableName.trim().isNotEmpty() &&
-          (candidatePhones().isNotEmpty() || candidateEmails().isNotEmpty() || isVCardMode)
-        ImportTargetMode.ADD_TO_EXISTING -> selectedExistingId != null
-      }
+      ImportReviewSummary(
+        ready = if (canSave && possibleDuplicate == null) 1 else 0,
+        duplicates = if (possibleDuplicate == null) 0 else 1,
+      )
+      saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
       Button(
         onClick = ::performSave,
         enabled = canSave,
@@ -534,7 +548,7 @@ fun QuickImportReviewScreen(
           if (targetMode == ImportTargetMode.CREATE_NEW) "Save new contact" else "Append to contact",
         )
       }
-      OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+      OutlinedButton(onClick = onBack, enabled = !isSaving, modifier = Modifier.fillMaxWidth()) {
         Text("Cancel")
       }
     }
@@ -573,10 +587,7 @@ fun QuickImportReviewScreen(
       title = { Text("Possible duplicate") },
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-          Text(
-            "This matches ${match.existingProfile.name} on ${match.matchedField.label}.",
-            fontWeight = FontWeight.Medium,
-          )
+          ImportDuplicateMessage(match)
           if (match.existingProfile.primaryPhone().isNotBlank()) {
             Text("Phone: ${match.existingProfile.primaryPhone()}", style = MaterialTheme.typography.bodySmall)
           }

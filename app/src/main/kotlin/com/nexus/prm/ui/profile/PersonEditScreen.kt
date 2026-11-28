@@ -99,6 +99,7 @@ import com.nexus.prm.ui.components.ProfileAvatar
 import com.nexus.prm.ui.theme.NexusFrostedStyle
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -178,7 +179,6 @@ data class PersonEditDraft(
       existingPhotoFileName = migrated.photoFileName,
       tags = migrated.tags,
       moreDetailsExpanded = listOf(
-        migrated.email,
         migrated.organisation,
         migrated.designation,
         migrated.service,
@@ -256,6 +256,8 @@ fun PersonEditScreen(
   val keyboardController = LocalSoftwareKeyboardController.current
   val nameFocusRequester = remember { FocusRequester() }
   var hasFocusedName by rememberSaveable(profileId) { mutableStateOf(false) }
+  var contactExpanded by rememberSaveable(profileId) { mutableStateOf(profileId != null) }
+  var contextExpanded by rememberSaveable(profileId) { mutableStateOf(profileId != null) }
 
   var draft by rememberSaveable(profileId, stateSaver = PersonEditDraft.Saver) {
     mutableStateOf(PersonEditDraft.initialFor(profileId))
@@ -288,8 +290,8 @@ fun PersonEditScreen(
     onBack()
   }
 
-  BackHandler(enabled = !isSaving) {
-    cancelAndCleanup()
+  BackHandler {
+    if (!isSaving) cancelAndCleanup()
   }
 
   LaunchedEffect(profileId, draft.isInitialized, focusNameOnOpen) {
@@ -301,7 +303,7 @@ fun PersonEditScreen(
         draft.copy(isInitialized = true)
       }
     }
-    if (focusNameOnOpen && draft.isInitialized && !hasFocusedName) {
+    if ((profileId == null || focusNameOnOpen) && draft.isInitialized && !hasFocusedName) {
       hasFocusedName = true
       nameFocusRequester.requestFocus()
       keyboardController?.show()
@@ -388,6 +390,8 @@ fun PersonEditScreen(
         }
         if (addAnother) {
           draft = PersonEditDraft.initialFor(null)
+          contactExpanded = false
+          contextExpanded = false
           pendingPhotoBytes = null
           nameError = null
           saveError = null
@@ -399,7 +403,9 @@ fun PersonEditScreen(
         } else {
           onSaved(saved.id)
         }
-      } catch (t: Throwable) {
+      } catch (cancelled: CancellationException) {
+        throw cancelled
+      } catch (t: Exception) {
         saveError = t.message?.takeIf { it.isNotBlank() }
           ?: "Could not save contact. Your changes are still here—please try again."
       } finally {
@@ -437,7 +443,7 @@ fun PersonEditScreen(
         colors = NexusFrostedStyle.topAppBarColors(),
         title = { Text(if (profileId == null) "Add person" else "Edit person", fontWeight = FontWeight.SemiBold) },
         navigationIcon = {
-          IconButton(onClick = ::cancelAndCleanup) {
+          IconButton(onClick = ::cancelAndCleanup, enabled = !isSaving) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
           }
         },
@@ -497,39 +503,6 @@ fun PersonEditScreen(
           )
         }
       }
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        ProfileAvatar(
-          name = draft.name.ifBlank { "?" },
-          photoFileName = if (draft.removePhoto) null else draft.existingPhotoFileName,
-          loadPhotoBytes = repository::loadPhotoBytes,
-          size = 72.dp,
-          overridePhotoBytes = pendingPhotoBytes,
-        )
-        Spacer(modifier = Modifier.width(16.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-          OutlinedButton(
-            onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) },
-          ) {
-            Icon(Icons.Filled.PhotoCamera, contentDescription = null)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(if (hasPhoto) "Replace photo" else "Add photo")
-          }
-          if (hasPhoto) {
-            TextButton(
-              onClick = {
-                DraftPhotoStorage.deleteTempPhoto(draft.pendingPhotoTempPath)
-                draft = draft.copy(pendingPhotoTempPath = null, removePhoto = true)
-              },
-            ) {
-              Text("Remove photo", color = MaterialTheme.colorScheme.error)
-            }
-          }
-        }
-      }
-
       OutlinedTextField(
         value = draft.name,
         onValueChange = {
@@ -543,327 +516,353 @@ fun PersonEditScreen(
         singleLine = true,
         keyboardOptions = KeyboardOptions(
           capitalization = KeyboardCapitalization.Words,
-          imeAction = ImeAction.Next,
+          imeAction = ImeAction.Done,
         ),
-        keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+        keyboardActions = KeyboardActions(onDone = { keyboardController?.hide() }),
         modifier = Modifier
           .fillMaxWidth()
           .focusRequester(nameFocusRequester)
           .bringIntoViewOnFocus(),
       )
 
-      MultiContactSection(
-        title = "Phone numbers",
-        fieldLabel = "Phone",
-        rows = draft.phoneRows,
-        keyboardType = KeyboardType.Phone,
-        onRowsChanged = { updated ->
-          val synced = PersonEditDraft.ensureTrailingEmptyRow(updated)
-          draft = draft.copy(
-            phoneRows = synced,
-            phone = synced.firstOrNull { it.value.isNotBlank() && it.isPrimary }?.value.orEmpty(),
-          )
-        },
-        onNext = { focusManager.moveFocus(FocusDirection.Down) },
-      )
-
-      MultiContactSection(
-        title = "Email addresses",
-        fieldLabel = "Email",
-        rows = draft.emailRows,
-        keyboardType = KeyboardType.Email,
-        onRowsChanged = { updated ->
-          val synced = PersonEditDraft.ensureTrailingEmptyRow(updated)
-          draft = draft.copy(
-            emailRows = synced,
-            email = synced.firstOrNull { it.value.isNotBlank() && it.isPrimary }?.value.orEmpty(),
-          )
-        },
-        onNext = { focusManager.moveFocus(FocusDirection.Down) },
-      )
-
-      val trimmedCategoryQuery = draft.categoryQuery.trim()
-      val filteredCategories = remember(allCategoryOptions, trimmedCategoryQuery) {
-        if (trimmedCategoryQuery.isEmpty()) {
-          allCategoryOptions
-        } else {
-          allCategoryOptions.filter { it.contains(trimmedCategoryQuery, ignoreCase = true) }
-        }
-      }
-      val hasExactCategoryMatch = trimmedCategoryQuery.isNotEmpty() &&
-        allCategoryOptions.any { it.equals(trimmedCategoryQuery, ignoreCase = true) }
-
-      ExposedDropdownMenuBox(
-        expanded = categoryExpanded,
-        onExpandedChange = { categoryExpanded = it },
+      OptionalEditSection(
+        title = "Contact details",
+        expanded = contactExpanded,
+        onToggle = { contactExpanded = !contactExpanded },
       ) {
-        OutlinedTextField(
-          value = draft.categoryQuery,
-          onValueChange = { typed ->
-            val exact = allCategoryOptions.firstOrNull { it.equals(typed.trim(), ignoreCase = true) }
-            val builtIn = exact?.let { PersonCategory.fromLabel(it) }
+        MultiContactSection(
+          title = "Phone numbers",
+          fieldLabel = "Phone",
+          rows = draft.phoneRows,
+          keyboardType = KeyboardType.Phone,
+          onRowsChanged = { updated ->
+            val synced = PersonEditDraft.ensureTrailingEmptyRow(updated)
             draft = draft.copy(
-              categoryQuery = typed,
-              category = builtIn,
-              customCategory = if (builtIn == null) exact else null,
+              phoneRows = synced,
+              phone = synced.firstOrNull { it.value.isNotBlank() && it.isPrimary }?.value.orEmpty(),
             )
-            categoryExpanded = true
           },
-          label = { Text("Category (optional)") },
-          singleLine = true,
-          trailingIcon = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-              if (draft.categoryQuery.isNotEmpty()) {
-                IconButton(
-                  onClick = {
-                    draft = draft.copy(categoryQuery = "", category = null, customCategory = null)
-                    categoryExpanded = true
-                  },
-                ) {
-                  Icon(Icons.Filled.Close, contentDescription = "Clear category")
-                }
-              }
-              ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded)
-            }
-          },
-          colors = NexusFrostedStyle.textFieldColors(),
-          modifier = Modifier
-            .fillMaxWidth()
-            .menuAnchor(MenuAnchorType.PrimaryEditable, enabled = true),
+          onNext = { focusManager.moveFocus(FocusDirection.Down) },
         )
-        ExposedDropdownMenu(
-          expanded = categoryExpanded,
-          onDismissRequest = { categoryExpanded = false },
-        ) {
-          filteredCategories.forEach { option ->
-            DropdownMenuItem(
-              text = { Text(option) },
-              trailingIcon = if (draft.categoryQuery.trim().equals(option, ignoreCase = true)) {
-                { Icon(Icons.Filled.Check, contentDescription = null) }
-              } else null,
-              onClick = {
-                val builtIn = PersonCategory.fromLabel(option)
-                draft = draft.copy(
-                  categoryQuery = option,
-                  category = builtIn,
-                  customCategory = if (builtIn == null) option else null,
-                )
-                categoryExpanded = false
-              },
+
+        MultiContactSection(
+          title = "Email addresses",
+          fieldLabel = "Email",
+          rows = draft.emailRows,
+          keyboardType = KeyboardType.Email,
+          onRowsChanged = { updated ->
+            val synced = PersonEditDraft.ensureTrailingEmptyRow(updated)
+            draft = draft.copy(
+              emailRows = synced,
+              email = synced.firstOrNull { it.value.isNotBlank() && it.isPrimary }?.value.orEmpty(),
             )
-          }
-          if (trimmedCategoryQuery.isNotEmpty() && !hasExactCategoryMatch) {
-            DropdownMenuItem(
-              text = {
-                Text(
-                  text = "Create \u201C$trimmedCategoryQuery\u201D",
-                  fontWeight = FontWeight.SemiBold,
-                  color = MaterialTheme.colorScheme.primary,
-                )
-              },
-              leadingIcon = {
-                Icon(
-                  imageVector = Icons.Filled.Add,
-                  contentDescription = null,
-                  tint = MaterialTheme.colorScheme.primary,
-                )
-              },
-              onClick = {
-                categoryExpanded = false
-                scope.launch {
-                  val savedLabel = repository.addCustomCategory(trimmedCategoryQuery)
-                  val builtIn = PersonCategory.fromLabel(savedLabel)
-                  draft = draft.copy(
-                    categoryQuery = savedLabel,
-                    category = builtIn,
-                    customCategory = if (builtIn == null) savedLabel else null,
-                  )
-                }
-              },
-            )
-          }
-        }
+          },
+          onNext = { focusManager.moveFocus(FocusDirection.Down) },
+        )
       }
 
-      OutlinedTextField(
-        value = draft.whereWeMet,
-        onValueChange = { draft = draft.copy(whereWeMet = it) },
-        label = { Text("Where we met") },
-        colors = NexusFrostedStyle.textFieldColors(),
-        minLines = 2,
-        maxLines = 4,
-        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-        modifier = Modifier
-          .fillMaxWidth()
-          .bringIntoViewOnFocus(),
-      )
-
-      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-          text = "Tags",
-          style = MaterialTheme.typography.labelLarge,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+      OptionalEditSection(
+        title = "Work",
+        expanded = draft.moreDetailsExpanded,
+        onToggle = { draft = draft.copy(moreDetailsExpanded = !draft.moreDetailsExpanded) },
+      ) {
+        val nextFocusAction = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) })
         Row(
           modifier = Modifier.fillMaxWidth(),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
           OutlinedTextField(
-            value = draft.tagInput,
-            onValueChange = { draft = draft.copy(tagInput = it) },
-            label = { Text("Add tag") },
+            value = draft.service,
+            onValueChange = { draft = draft.copy(service = it) },
+            label = { Text("Service") },
+            colors = NexusFrostedStyle.textFieldColors(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Next),
+            keyboardActions = nextFocusAction,
+            modifier = Modifier.weight(1f).bringIntoViewOnFocus(),
+          )
+          OutlinedTextField(
+            value = draft.serviceBatch,
+            onValueChange = { draft = draft.copy(serviceBatch = it) },
+            label = { Text("Batch") },
             colors = NexusFrostedStyle.textFieldColors(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-            keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
-            modifier = Modifier
-              .weight(1f)
-              .bringIntoViewOnFocus(),
+            keyboardActions = nextFocusAction,
+            modifier = Modifier.weight(1f).bringIntoViewOnFocus(),
           )
-          OutlinedButton(
-            onClick = {
-              val normalized = DirectorySearch.normalizeTags(draft.tags + draft.tagInput, allProfiles)
-              draft = draft.copy(tags = normalized, tagInput = "")
-            },
-            enabled = draft.tagInput.isNotBlank(),
-          ) {
-            Icon(Icons.Filled.Add, contentDescription = null)
-            Spacer(modifier = Modifier.width(4.dp))
-            Text("Add")
-          }
         }
-        if (draft.tags.isNotEmpty()) {
-          FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-          ) {
-            draft.tags.forEach { tag ->
-              InputChip(
-                selected = true,
-                onClick = {
-                  draft = draft.copy(tags = draft.tags.filterNot { it.equals(tag, ignoreCase = true) })
-                },
-                label = { Text(tag) },
-                trailingIcon = { Icon(Icons.Filled.Close, contentDescription = "Remove $tag") },
-              )
-            }
-          }
-        }
-        val unusedSuggestions = suggestedTags.filter { candidate ->
-          draft.tags.none { it.equals(candidate, ignoreCase = true) }
-        }
-        if (unusedSuggestions.isNotEmpty()) {
-          FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-          ) {
-            unusedSuggestions.take(8).forEach { suggestion ->
-              SuggestionChip(
-                onClick = {
-                  draft = draft.copy(tags = DirectorySearch.normalizeTags(draft.tags + suggestion, allProfiles))
-                },
-                label = { Text("+ $suggestion") },
-              )
-            }
-          }
-        }
+        OutlinedTextField(
+          value = draft.cadre,
+          onValueChange = { draft = draft.copy(cadre = it) },
+          label = { Text("Cadre") },
+          colors = NexusFrostedStyle.textFieldColors(),
+          singleLine = true,
+          keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
+          keyboardActions = nextFocusAction,
+          modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
+        )
+        OutlinedTextField(
+          value = draft.organisation,
+          onValueChange = { draft = draft.copy(organisation = it) },
+          label = { Text("Organisation") },
+          colors = NexusFrostedStyle.textFieldColors(),
+          singleLine = true,
+          keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
+          keyboardActions = nextFocusAction,
+          modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
+        )
+        OutlinedTextField(
+          value = draft.designation,
+          onValueChange = { draft = draft.copy(designation = it) },
+          label = { Text("Designation") },
+          colors = NexusFrostedStyle.textFieldColors(),
+          singleLine = true,
+          keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
+          keyboardActions = nextFocusAction,
+          modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
+        )
       }
 
-      Row(
-        modifier = Modifier
-          .fillMaxWidth()
-          .clickable { draft = draft.copy(moreDetailsExpanded = !draft.moreDetailsExpanded) }
-          .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
+      OptionalEditSection(
+        title = "Context and photo",
+        expanded = contextExpanded,
+        onToggle = { contextExpanded = !contextExpanded },
       ) {
-        Text(
-          text = "More details",
-          style = MaterialTheme.typography.titleSmall,
-          fontWeight = FontWeight.SemiBold,
-          color = MaterialTheme.colorScheme.primary,
-        )
-        Icon(
-          imageVector = if (draft.moreDetailsExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-          contentDescription = if (draft.moreDetailsExpanded) "Collapse more details" else "Expand more details",
-          tint = MaterialTheme.colorScheme.primary,
-        )
-      }
+        val trimmedCategoryQuery = draft.categoryQuery.trim()
+        val filteredCategories = remember(allCategoryOptions, trimmedCategoryQuery) {
+          if (trimmedCategoryQuery.isEmpty()) {
+            allCategoryOptions
+          } else {
+            allCategoryOptions.filter { it.contains(trimmedCategoryQuery, ignoreCase = true) }
+          }
+        }
+        val hasExactCategoryMatch = trimmedCategoryQuery.isNotEmpty() &&
+          allCategoryOptions.any { it.equals(trimmedCategoryQuery, ignoreCase = true) }
 
-      AnimatedVisibility(visible = draft.moreDetailsExpanded) {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-          val nextFocusAction = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) })
+        ExposedDropdownMenuBox(
+          expanded = categoryExpanded,
+          onExpandedChange = { categoryExpanded = it },
+        ) {
+          OutlinedTextField(
+            value = draft.categoryQuery,
+            onValueChange = { typed ->
+              val exact = allCategoryOptions.firstOrNull { it.equals(typed.trim(), ignoreCase = true) }
+              val builtIn = exact?.let { PersonCategory.fromLabel(it) }
+              draft = draft.copy(
+                categoryQuery = typed,
+                category = builtIn,
+                customCategory = if (builtIn == null) exact else null,
+              )
+              categoryExpanded = true
+            },
+            label = { Text("Category (optional)") },
+            singleLine = true,
+            trailingIcon = {
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                if (draft.categoryQuery.isNotEmpty()) {
+                  IconButton(
+                    onClick = {
+                      draft = draft.copy(categoryQuery = "", category = null, customCategory = null)
+                      categoryExpanded = true
+                    },
+                  ) {
+                    Icon(Icons.Filled.Close, contentDescription = "Clear category")
+                  }
+                }
+                ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded)
+              }
+            },
+            colors = NexusFrostedStyle.textFieldColors(),
+            modifier = Modifier
+              .fillMaxWidth()
+              .menuAnchor(MenuAnchorType.PrimaryEditable, enabled = true),
+          )
+          ExposedDropdownMenu(
+            expanded = categoryExpanded,
+            onDismissRequest = { categoryExpanded = false },
+          ) {
+            filteredCategories.forEach { option ->
+              DropdownMenuItem(
+                text = { Text(option) },
+                trailingIcon = if (draft.categoryQuery.trim().equals(option, ignoreCase = true)) {
+                  { Icon(Icons.Filled.Check, contentDescription = null) }
+                } else null,
+                onClick = {
+                  val builtIn = PersonCategory.fromLabel(option)
+                  draft = draft.copy(
+                    categoryQuery = option,
+                    category = builtIn,
+                    customCategory = if (builtIn == null) option else null,
+                  )
+                  categoryExpanded = false
+                },
+              )
+            }
+            if (trimmedCategoryQuery.isNotEmpty() && !hasExactCategoryMatch) {
+              DropdownMenuItem(
+                text = {
+                  Text(
+                    text = "Create \u201C$trimmedCategoryQuery\u201D",
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                  )
+                },
+                leadingIcon = {
+                  Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                  )
+                },
+                onClick = {
+                  categoryExpanded = false
+                  scope.launch {
+                    val savedLabel = repository.addCustomCategory(trimmedCategoryQuery)
+                    val builtIn = PersonCategory.fromLabel(savedLabel)
+                    draft = draft.copy(
+                      categoryQuery = savedLabel,
+                      category = builtIn,
+                      customCategory = if (builtIn == null) savedLabel else null,
+                    )
+                  }
+                },
+              )
+            }
+          }
+        }
+
+        OutlinedTextField(
+          value = draft.whereWeMet,
+          onValueChange = { draft = draft.copy(whereWeMet = it) },
+          label = { Text("Where we met") },
+          colors = NexusFrostedStyle.textFieldColors(),
+          minLines = 2,
+          maxLines = 4,
+          keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+          modifier = Modifier
+            .fillMaxWidth()
+            .bringIntoViewOnFocus(),
+        )
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text(
+            text = "Tags",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
           Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
           ) {
             OutlinedTextField(
-              value = draft.service,
-              onValueChange = { draft = draft.copy(service = it) },
-              label = { Text("Service") },
-              colors = NexusFrostedStyle.textFieldColors(),
-              singleLine = true,
-              keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, imeAction = ImeAction.Next),
-              keyboardActions = nextFocusAction,
-              modifier = Modifier.weight(1f).bringIntoViewOnFocus(),
-            )
-            OutlinedTextField(
-              value = draft.serviceBatch,
-              onValueChange = { draft = draft.copy(serviceBatch = it) },
-              label = { Text("Batch") },
+              value = draft.tagInput,
+              onValueChange = { draft = draft.copy(tagInput = it) },
+              label = { Text("Add tag") },
               colors = NexusFrostedStyle.textFieldColors(),
               singleLine = true,
               keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-              keyboardActions = nextFocusAction,
-              modifier = Modifier.weight(1f).bringIntoViewOnFocus(),
+              keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) }),
+              modifier = Modifier
+                .weight(1f)
+                .bringIntoViewOnFocus(),
             )
+            OutlinedButton(
+              onClick = {
+                val normalized = DirectorySearch.normalizeTags(draft.tags + draft.tagInput, allProfiles)
+                draft = draft.copy(tags = normalized, tagInput = "")
+              },
+              enabled = draft.tagInput.isNotBlank(),
+            ) {
+              Icon(Icons.Filled.Add, contentDescription = null)
+              Spacer(modifier = Modifier.width(4.dp))
+              Text("Add")
+            }
           }
-          OutlinedTextField(
-            value = draft.cadre,
-            onValueChange = { draft = draft.copy(cadre = it) },
-            label = { Text("Cadre") },
-            colors = NexusFrostedStyle.textFieldColors(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
-            keyboardActions = nextFocusAction,
-            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
+          if (draft.tags.isNotEmpty()) {
+            FlowRow(
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+              verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+              draft.tags.forEach { tag ->
+                InputChip(
+                  selected = true,
+                  onClick = {
+                    draft = draft.copy(tags = draft.tags.filterNot { it.equals(tag, ignoreCase = true) })
+                  },
+                  label = { Text(tag) },
+                  trailingIcon = { Icon(Icons.Filled.Close, contentDescription = "Remove $tag") },
+                )
+              }
+            }
+          }
+          val unusedSuggestions = suggestedTags.filter { candidate ->
+            draft.tags.none { it.equals(candidate, ignoreCase = true) }
+          }
+          if (unusedSuggestions.isNotEmpty()) {
+            FlowRow(
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+              verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+              unusedSuggestions.take(8).forEach { suggestion ->
+                SuggestionChip(
+                  onClick = {
+                    draft = draft.copy(tags = DirectorySearch.normalizeTags(draft.tags + suggestion, allProfiles))
+                  },
+                  label = { Text("+ $suggestion") },
+                )
+              }
+            }
+          }
+        }
+
+        OutlinedTextField(
+          value = draft.otherDetails,
+          onValueChange = { draft = draft.copy(otherDetails = it) },
+          label = { Text("Other details") },
+          colors = NexusFrostedStyle.textFieldColors(),
+          minLines = 3,
+          maxLines = 6,
+          keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+          modifier = Modifier
+            .fillMaxWidth()
+            .bringIntoViewOnFocus(),
+        )
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          ProfileAvatar(
+            name = draft.name.ifBlank { "?" },
+            photoFileName = if (draft.removePhoto) null else draft.existingPhotoFileName,
+            loadPhotoBytes = repository::loadPhotoBytes,
+            size = 72.dp,
+            overridePhotoBytes = pendingPhotoBytes,
           )
-          OutlinedTextField(
-            value = draft.organisation,
-            onValueChange = { draft = draft.copy(organisation = it) },
-            label = { Text("Organisation") },
-            colors = NexusFrostedStyle.textFieldColors(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
-            keyboardActions = nextFocusAction,
-            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
-          )
-          OutlinedTextField(
-            value = draft.designation,
-            onValueChange = { draft = draft.copy(designation = it) },
-            label = { Text("Designation") },
-            colors = NexusFrostedStyle.textFieldColors(),
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Next),
-            keyboardActions = nextFocusAction,
-            modifier = Modifier.fillMaxWidth().bringIntoViewOnFocus(),
-          )
+          Spacer(modifier = Modifier.width(16.dp))
+          Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            OutlinedButton(
+              onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) },
+            ) {
+              Icon(Icons.Filled.PhotoCamera, contentDescription = null)
+              Spacer(modifier = Modifier.width(8.dp))
+              Text(if (hasPhoto) "Replace photo" else "Add photo")
+            }
+            if (hasPhoto) {
+              TextButton(
+                onClick = {
+                  DraftPhotoStorage.deleteTempPhoto(draft.pendingPhotoTempPath)
+                  draft = draft.copy(pendingPhotoTempPath = null, removePhoto = true)
+                },
+              ) {
+                Text("Remove photo", color = MaterialTheme.colorScheme.error)
+              }
+            }
+          }
         }
       }
-
-      OutlinedTextField(
-        value = draft.otherDetails,
-        onValueChange = { draft = draft.copy(otherDetails = it) },
-        label = { Text("Other details") },
-        colors = NexusFrostedStyle.textFieldColors(),
-        minLines = 3,
-        maxLines = 6,
-        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-        modifier = Modifier
-          .fillMaxWidth()
-          .bringIntoViewOnFocus(),
-      )
 
       Spacer(modifier = Modifier.height(8.dp))
       Button(
@@ -941,6 +940,49 @@ fun PersonEditScreen(
         }
       },
     )
+  }
+}
+
+@Composable
+private fun OptionalEditSection(
+  title: String,
+  expanded: Boolean,
+  onToggle: () -> Unit,
+  content: @Composable () -> Unit,
+) {
+  Card(
+    modifier = Modifier.fillMaxWidth(),
+    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+  ) {
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .clickable(
+          onClickLabel = if (expanded) "Collapse $title" else "Expand $title",
+          onClick = onToggle,
+        )
+        .padding(horizontal = 16.dp, vertical = 12.dp),
+      verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+      Text(
+        text = title,
+        style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier.weight(1f),
+      )
+      Icon(
+        imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+        contentDescription = null,
+      )
+    }
+    AnimatedVisibility(visible = expanded) {
+      Column(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+      ) {
+        content()
+      }
+    }
   }
 }
 

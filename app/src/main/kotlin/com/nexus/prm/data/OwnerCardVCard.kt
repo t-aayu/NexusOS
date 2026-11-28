@@ -4,12 +4,16 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
+import com.google.zxing.WriterException
 import com.google.zxing.qrcode.QRCodeWriter
 
 data class OwnerCardSharePreview(
   val lines: List<Pair<String, String>>,
   val vCardPayload: String,
 )
+
+internal fun OwnerCard.shareableName(): String =
+  if (shareName) name.trim() else ""
 
 object OwnerCardVCard {
   fun buildPreview(card: OwnerCard): OwnerCardSharePreview {
@@ -19,8 +23,8 @@ object OwnerCardVCard {
       appendLine("VERSION:3.0")
     }
 
-    val name = card.name.trim()
-    if (card.shareName && name.isNotEmpty()) {
+    val name = card.shareableName()
+    if (name.isNotEmpty()) {
       lines += "Name" to name
       vcard.appendLine("FN:${escapeVCard(name)}")
       vcard.appendLine("N:;${escapeVCard(name)};;;")
@@ -157,7 +161,11 @@ object OwnerCardVCard {
       EncodeHintType.CHARACTER_SET to "UTF-8",
       EncodeHintType.MARGIN to margin,
     )
-    val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
+    val matrix = try {
+      QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
+    } catch (_: WriterException) {
+      return null
+    }
     val bitmap = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.RGB_565)
     for (x in 0 until sizePx) {
       for (y in 0 until sizePx) {

@@ -29,7 +29,7 @@ object ContactShareHelper {
     val preview = OwnerCardVCard.buildPreview(card)
     val text = OwnerCardVCard.buildOwnerShareText(preview)
     if (text.isBlank()) return
-    val subject = card.name.trim().ifEmpty { "My contact card" }
+    val subject = card.shareableName().ifEmpty { "My contact card" }
     val sendIntent = Intent(Intent.ACTION_SEND).apply {
       type = "text/plain"
       putExtra(Intent.EXTRA_TEXT, text)
@@ -41,7 +41,7 @@ object ContactShareHelper {
   fun shareOwnerVCard(context: Context, card: OwnerCard) {
     val preview = OwnerCardVCard.buildPreview(card)
     if (preview.vCardPayload.isBlank()) return
-    val safeBase = sanitizeBaseName(card.name, fallback = "my_contact_card")
+    val safeBase = sanitizeBaseName(card.shareableName(), fallback = "my_contact_card")
     val uri = writeSharedFile(context, "$safeBase.vcf") { file ->
       file.writeText(preview.vCardPayload, Charsets.UTF_8)
     }
@@ -49,7 +49,7 @@ object ContactShareHelper {
       context = context,
       uri = uri,
       mimeType = "text/x-vcard",
-      subject = card.name.trim().ifEmpty { "My contact card" },
+      subject = card.shareableName().ifEmpty { "My contact card" },
       chooserTitle = "Share my vCard",
     )
   }
@@ -61,7 +61,7 @@ object ContactShareHelper {
       sizePx = 768,
       margin = 3,
     ) ?: return
-    val safeBase = sanitizeBaseName(card.name, fallback = "my_contact_card")
+    val safeBase = sanitizeBaseName(card.shareableName(), fallback = "my_contact_card")
     val uri = writeSharedFile(context, "$safeBase-qr.png") { file ->
       FileOutputStream(file).use { out ->
         bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
@@ -71,7 +71,7 @@ object ContactShareHelper {
       context = context,
       uri = uri,
       mimeType = "image/png",
-      subject = card.name.trim().ifEmpty { "My contact card QR" },
+      subject = card.shareableName().ifEmpty { "My contact card QR" },
       chooserTitle = "Share QR code",
     )
   }
