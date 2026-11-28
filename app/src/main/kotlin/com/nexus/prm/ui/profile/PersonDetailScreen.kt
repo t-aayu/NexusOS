@@ -276,7 +276,12 @@ fun PersonDetailScreen(
                 Toast.makeText(context, "No dialler app available", Toast.LENGTH_SHORT).show()
               }
             }
-            ContactMethodAction("WhatsApp", Icons.AutoMirrored.Filled.Chat, whatsappPhones) { number ->
+            ContactMethodAction(
+              "WhatsApp",
+              Icons.AutoMirrored.Filled.Chat,
+              whatsappPhones,
+              chooseWhenMultiple = true,
+            ) { number ->
               formatWhatsAppDigits(number)?.let { digits ->
                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$digits"))
                 runCatching { context.startActivity(intent) }.onFailure {
@@ -750,24 +755,30 @@ private fun ContactMethodAction(
   label: String,
   icon: ImageVector,
   values: List<LabeledContactValue>,
+  chooseWhenMultiple: Boolean = false,
   onContact: (String) -> Unit,
 ) {
   if (values.isEmpty()) return
   val primary = values.firstOrNull { it.isPrimary }
+  val openPicker = chooseWhenMultiple && values.size > 1
   var showChoices by rememberSaveable { mutableStateOf(false) }
 
   Box {
     Row(verticalAlignment = Alignment.CenterVertically) {
       FilledTonalButton(
         onClick = {
-          if (primary == null) showChoices = true else onContact(primary.value)
+          val entry = if (chooseWhenMultiple) values.singleOrNull() else primary
+          if (entry == null) showChoices = true else onContact(entry.value)
         },
       ) {
         Icon(icon, contentDescription = null)
         Spacer(Modifier.width(6.dp))
         Text(label)
+        if (openPicker) {
+          Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
+        }
       }
-      if (primary != null && values.size > 1) {
+      if (!openPicker && primary != null && values.size > 1) {
         IconButton(onClick = { showChoices = true }) {
           Icon(Icons.Filled.ArrowDropDown, contentDescription = "$label using another contact value")
         }
