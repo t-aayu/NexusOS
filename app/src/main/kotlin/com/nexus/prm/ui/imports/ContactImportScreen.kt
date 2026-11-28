@@ -2,6 +2,7 @@ package com.nexus.prm.ui.imports
 
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -29,7 +30,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -62,6 +62,7 @@ import com.nexus.prm.data.DirectoryRepository
 import com.nexus.prm.data.DuplicateMatch
 import com.nexus.prm.data.DuplicateMatcher
 import com.nexus.prm.data.PersonProfile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -104,6 +105,7 @@ fun ContactImportScreen(
   var step by remember { mutableStateOf(ContactImportStep.SELECT) }
   var reviewItems by remember { mutableStateOf<List<ReviewedContact>>(emptyList()) }
   var isSaving by remember { mutableStateOf(false) }
+  var saveFailed by remember { mutableStateOf(false) }
 
   val permissionLauncher = rememberLauncherForActivityResult(
     ActivityResultContracts.RequestPermission(),
@@ -133,6 +135,13 @@ fun ContactImportScreen(
 
   val selectedCount = selectedIds.values.count { it }
 
+  BackHandler(enabled = step == ContactImportStep.REVIEW) {
+    if (!isSaving) {
+      saveFailed = false
+      step = ContactImportStep.SELECT
+    }
+  }
+
   Scaffold(
     modifier = modifier.fillMaxSize(),
     containerColor = MaterialTheme.colorScheme.background,
@@ -150,8 +159,10 @@ fun ContactImportScreen(
         },
         navigationIcon = {
           IconButton(
+            enabled = !isSaving,
             onClick = {
               if (step == ContactImportStep.REVIEW) {
+                saveFailed = false
                 step = ContactImportStep.SELECT
               } else {
                 onBack()
@@ -290,6 +301,11 @@ fun ContactImportScreen(
         computeBatchMatches(reviewItems, existingProfiles)
       }
 
+      val approvedItems = reviewItems.filterIndexed { index, item ->
+        item.contact.displayName.isNotBlank() && (index !in duplicateMatches || item.keepIfDuplicate)
+      }
+      val skippedCount = reviewItems.size - approvedItems.size
+
       Column(
         modifier = Modifier
           .fillMaxSize()
@@ -300,6 +316,9 @@ fun ContactImportScreen(
           contentPadding = PaddingValues(16.dp),
           verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+          item {
+            ImportReviewSummary(approvedItems.size, skippedCount, duplicateMatches.size)
+          }
           items(reviewItems.indices.toList(), key = { reviewItems[it].contact.contactId }) { index ->
             val item = reviewItems[index]
             val match = duplicateMatches[index]
@@ -328,13 +347,14 @@ fun ContactImportScreen(
                       verticalAlignment = Alignment.CenterVertically,
                       modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
+                        .clickable(enabled = !isSaving) {
                           reviewItems = reviewItems.toMutableList().also {
                             it[index] = item.copy(chosenPhone = phoneOption)
                           }
                         },
                     ) {
                       RadioButton(
+                        enabled = !isSaving,
                         selected = item.chosenPhone == phoneOption,
                         onClick = {
                           reviewItems = reviewItems.toMutableList().also {
@@ -356,13 +376,14 @@ fun ContactImportScreen(
                       verticalAlignment = Alignment.CenterVertically,
                       modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
+                        .clickable(enabled = !isSaving) {
                           reviewItems = reviewItems.toMutableList().also {
                             it[index] = item.copy(chosenEmail = emailOption)
                           }
                         },
                     ) {
                       RadioButton(
+                        enabled = !isSaving,
                         selected = item.chosenEmail == emailOption,
                         onClick = {
                           reviewItems = reviewItems.toMutableList().also {
@@ -378,36 +399,23 @@ fun ContactImportScreen(
                 }
 
                 if (match != null) {
-                  Text(
-                    text = "Possible duplicate: matches ${match.existingProfile.name} (${match.matchedField.label})",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.Medium,
-                  )
-                  Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                      selected = !item.keepIfDuplicate,
-                      onClick = {
-                        reviewItems = reviewItems.toMutableList().also {
-                          it[index] = item.copy(keepIfDuplicate = false)
-                        }
-                      },
-                      label = { Text("Skip") },
-                    )
-                    FilterChip(
-                      selected = item.keepIfDuplicate,
-                      onClick = {
-                        reviewItems = reviewItems.toMutableList().also {
-                          it[index] = item.copy(keepIfDuplicate = true)
-                        }
-                      },
-                      label = { Text("Keep separately") },
-                    )
+                  ImportDuplicateDecision(match, item.keepIfDuplicate, enabled = !isSaving) { keep ->
+                    reviewItems = reviewItems.toMutableList().also {
+                      it[index] = item.copy(keepIfDuplicate = keep)
+                    }
                   }
                 }
               }
             }
           }
+        }
+
+        if (saveFailed) {
+          Text(
+            "Could not save this import. Review choices are still here.",
+            modifier = Modifier.padding(horizontal = 16.dp),
+            color = MaterialTheme.colorScheme.error,
+          )
         }
 
         Row(
@@ -428,32 +436,30 @@ fun ContactImportScreen(
             modifier = Modifier.weight(1f),
             onClick = {
               isSaving = true
+              saveFailed = false
               scope.launch {
-                val now = System.currentTimeMillis()
-                val toSave = mutableListOf<PersonProfile>()
-                var skipped = 0
-                reviewItems.forEachIndexed { idx, item ->
-                  val match = duplicateMatches[idx]
-                  if (match != null && !item.keepIfDuplicate) {
-                    skipped++
-                  } else if (item.contact.displayName.isNotBlank()) {
-                    toSave += PersonProfile(
-                      id = "pending-$idx",
+                try {
+                  val toSave = approvedItems.mapIndexed { index, item ->
+                    PersonProfile(
+                      id = "pending-$index",
                       name = item.contact.displayName.trim(),
                       phone = item.chosenPhone.trim(),
                       email = item.chosenEmail.trim(),
-                      createdAtEpochMs = now + idx,
-                      updatedAtEpochMs = now + idx,
                     )
                   }
+                  val saved = repository.saveProfilesBatch(toSave)
+                  onImported("${saved.size} saved, $skippedCount skipped.")
+                } catch (cancelled: CancellationException) {
+                  throw cancelled
+                } catch (_: Exception) {
+                  saveFailed = true
+                } finally {
+                  isSaving = false
                 }
-                val saved = repository.saveProfilesBatch(toSave)
-                isSaving = false
-                onImported("Imported ${saved.size} contacts ($skipped skipped).")
               }
             },
           ) {
-            Text("Save approved")
+            Text(if (approvedItems.isEmpty()) "Done" else "Save contacts")
           }
         }
       }

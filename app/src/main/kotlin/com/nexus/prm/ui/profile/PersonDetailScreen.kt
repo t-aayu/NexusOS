@@ -6,6 +6,8 @@ import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -23,7 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Delete
@@ -34,7 +37,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -49,18 +51,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -69,6 +74,7 @@ import com.nexus.prm.data.ContactShareHelper
 import com.nexus.prm.data.DirectoryRepository
 import com.nexus.prm.data.DuplicateMatcher
 import com.nexus.prm.data.IntroductionRecord
+import com.nexus.prm.data.LabeledContactValue
 import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.data.PostingEntry
 import com.nexus.prm.data.PostingValidation
@@ -125,6 +131,9 @@ fun PersonDetailScreen(
   }
   val scope = rememberCoroutineScope()
   val context = LocalContext.current
+  var showHistory by rememberSaveable(profileId) { mutableStateOf(false) }
+  val overviewScroll = rememberScrollState()
+  val historyScroll = rememberScrollState()
   var showDeleteDialog by remember { mutableStateOf(false) }
   var showGroupsDialog by remember { mutableStateOf(false) }
   var editingPosting by remember { mutableStateOf<PostingEntry?>(null) }
@@ -148,16 +157,6 @@ fun PersonDetailScreen(
           if (profile != null) {
             IconButton(onClick = { ContactShareHelper.shareContact(context, profile) }) {
               Icon(Icons.Outlined.Share, contentDescription = "Share contact")
-            }
-            IconButton(onClick = { scope.launch { repository.toggleFavourite(profile.id) } }) {
-              Icon(
-                imageVector = if (profile.isFavourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
-                contentDescription = if (profile.isFavourite) "Remove favourite" else "Mark favourite",
-                tint = if (profile.isFavourite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-              )
-            }
-            IconButton(onClick = { onEdit(profile.id) }) {
-              Icon(Icons.Outlined.Edit, contentDescription = "Edit")
             }
             IconButton(onClick = { showDeleteDialog = true }) {
               Icon(Icons.Outlined.Delete, contentDescription = "Delete")
@@ -187,7 +186,7 @@ fun PersonDetailScreen(
       modifier = Modifier
         .fillMaxSize()
         .padding(innerPadding)
-        .verticalScroll(rememberScrollState())
+        .verticalScroll(if (showHistory) historyScroll else overviewScroll)
         .padding(16.dp),
       verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -243,344 +242,65 @@ fun PersonDetailScreen(
           style = MaterialTheme.typography.bodySmall,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        val primaryPhone = profile.primaryPhone()
-        val primaryEmail = profile.primaryEmail()
-        val whatsAppDigits = formatWhatsAppDigits(primaryPhone)
-        val hasPhone = primaryPhone.isNotBlank()
-        val hasEmail = primaryEmail.isNotBlank()
-        if (hasPhone || hasEmail) {
-          Spacer(modifier = Modifier.height(14.dp))
+        FlowRow(
+          horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+          verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+          TextButton(onClick = { onEdit(profile.id) }) {
+            Icon(Icons.Outlined.Edit, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("Edit profile")
+          }
+          TextButton(onClick = { scope.launch { repository.toggleFavourite(profile.id) } }) {
+            Icon(
+              imageVector = if (profile.isFavourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
+              contentDescription = null,
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(if (profile.isFavourite) "Favourited" else "Favourite")
+          }
+        }
+
+        val phones = profile.resolvedPhones()
+        val emails = profile.resolvedEmails()
+        val whatsappPhones = phones.filter { formatWhatsAppDigits(it.value) != null }
+        if (phones.isNotEmpty() || emails.isNotEmpty()) {
+          Spacer(Modifier.height(8.dp))
           FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
             verticalArrangement = Arrangement.spacedBy(4.dp),
           ) {
-            if (hasPhone) {
-              Button(
-                colors = ButtonDefaults.buttonColors(
-                  containerColor = MaterialTheme.colorScheme.primary,
-                  contentColor = MaterialTheme.colorScheme.onPrimary,
-                ),
-                onClick = {
-                  val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(primaryPhone)}"))
-                  runCatching { context.startActivity(intent) }.onFailure {
-                    Toast.makeText(context, "No dialler app available", Toast.LENGTH_SHORT).show()
-                  }
-                },
-              ) {
-                Icon(Icons.Filled.Call, contentDescription = null)
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Call")
+            ContactMethodAction("Call", Icons.Filled.Call, phones) { number ->
+              val intent = Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null))
+              runCatching { context.startActivity(intent) }.onFailure {
+                Toast.makeText(context, "No dialler app available", Toast.LENGTH_SHORT).show()
               }
             }
-            if (whatsAppDigits != null) {
-              FilledTonalButton(
-                colors = ButtonDefaults.filledTonalButtonColors(
-                  containerColor = MaterialTheme.colorScheme.primaryContainer,
-                  contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                ),
-                onClick = {
-                  val intent = Intent(
-                    Intent.ACTION_VIEW,
-                    Uri.parse("https://wa.me/$whatsAppDigits"),
-                  )
-                  runCatching { context.startActivity(intent) }.onFailure {
-                    Toast.makeText(context, "WhatsApp is not available to open this chat.", Toast.LENGTH_SHORT).show()
-                  }
-                },
-              ) {
-                Icon(Icons.Filled.Chat, contentDescription = null)
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("WhatsApp")
+            ContactMethodAction("WhatsApp", Icons.AutoMirrored.Filled.Chat, whatsappPhones) { number ->
+              formatWhatsAppDigits(number)?.let { digits ->
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$digits"))
+                runCatching { context.startActivity(intent) }.onFailure {
+                  Toast.makeText(context, "No app available to open this chat", Toast.LENGTH_SHORT).show()
+                }
               }
             }
-            if (hasEmail) {
-              FilledTonalButton(
-                colors = ButtonDefaults.filledTonalButtonColors(
-                  containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                  contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                ),
-                onClick = {
-                  val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:${Uri.encode(primaryEmail)}"))
-                  runCatching { context.startActivity(intent) }.onFailure {
-                    Toast.makeText(context, "No email app available", Toast.LENGTH_SHORT).show()
-                  }
-                },
-              ) {
-                Icon(Icons.Filled.Email, contentDescription = null)
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Email")
+            ContactMethodAction("Email", Icons.Filled.Email, emails) { email ->
+              val intent = Intent(Intent.ACTION_SENDTO, Uri.fromParts("mailto", email, null))
+              runCatching { context.startActivity(intent) }.onFailure {
+                Toast.makeText(context, "No email app available", Toast.LENGTH_SHORT).show()
               }
             }
           }
         }
       }
 
-      val resolvedPhones = profile.resolvedPhones()
-      val resolvedEmails = profile.resolvedEmails()
-      val quickDetails = buildList {
-        resolvedPhones.forEach { entry ->
-          val suffix = if (entry.isPrimary && resolvedPhones.size > 1) "${entry.label} \u00B7 Primary" else entry.label
-          add("Phone ($suffix)" to entry.value)
-        }
-        resolvedEmails.forEach { entry ->
-          val suffix = if (entry.isPrimary && resolvedEmails.size > 1) "${entry.label} \u00B7 Primary" else entry.label
-          add("Email ($suffix)" to entry.value)
-        }
-        if (profile.whereWeMet.isNotBlank()) {
-          add("Where we met" to profile.whereWeMet)
-        }
+      SecondaryTabRow(selectedTabIndex = if (showHistory) 1 else 0) {
+        Tab(selected = !showHistory, onClick = { showHistory = false }, text = { Text("Overview") })
+        Tab(selected = showHistory, onClick = { showHistory = true }, text = { Text("History") })
       }
 
-      if (quickDetails.isNotEmpty()) {
-        DetailSectionCard(title = "Contact & Context", rows = quickDetails)
-      }
-
-      val moreDetails = listOf(
-        "Service" to profile.service,
-        "Batch" to profile.serviceBatch,
-        "Cadre" to profile.cadre,
-        "Organisation" to profile.organisation,
-        "Designation" to profile.designation,
-      ).filter { it.second.isNotBlank() }
-
-      if (moreDetails.isNotEmpty()) {
-        DetailSectionCard(title = "More details", rows = moreDetails)
-      }
-
-      if (profile.otherDetails.isNotBlank()) {
-        DetailSectionCard(
-          title = "Other details",
-          rows = listOf("Notes" to profile.otherDetails),
-        )
-      }
-
-      // Posting and role history
-      Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-      ) {
-        Column(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-          verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Text(
-              text = "Posting & role history",
-              style = MaterialTheme.typography.titleSmall,
-              color = MaterialTheme.colorScheme.primary,
-              fontWeight = FontWeight.SemiBold,
-            )
-            TextButton(onClick = { showAddPostingDialog = true }) {
-              Icon(Icons.Filled.Add, contentDescription = null)
-              Spacer(modifier = Modifier.width(4.dp))
-              Text("Add")
-            }
-          }
-          if (profile.postings.isEmpty()) {
-            Text(
-              text = "No postings recorded yet.",
-              style = MaterialTheme.typography.bodyMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          } else {
-            val orderedPostings = profile.postings.sortedByDescending { it.isCurrent }
-            orderedPostings.forEachIndexed { idx, entry ->
-              if (idx > 0) HorizontalDivider()
-              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(
-                  modifier = Modifier.fillMaxWidth(),
-                  horizontalArrangement = Arrangement.SpaceBetween,
-                  verticalAlignment = Alignment.CenterVertically,
-                ) {
-                  val title = listOf(entry.designation, entry.organisation)
-                    .filter { it.isNotBlank() }
-                    .joinToString(" — ")
-                    .ifBlank { "Role" }
-                  Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = if (entry.isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                    modifier = Modifier.weight(1f),
-                  )
-                  if (entry.isCurrent) {
-                    AssistChip(
-                      onClick = {},
-                      label = { Text("Current") },
-                      colors = AssistChipDefaults.assistChipColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        labelColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                      ),
-                      border = null,
-                    )
-                  }
-                }
-                val meta = listOfNotNull(
-                  entry.location.takeIf { it.isNotBlank() },
-                  when {
-                    entry.startDate.isNotBlank() && entry.endDate.isNotBlank() ->
-                      "${PostingValidation.formatForDisplay(entry.startDate)} to ${PostingValidation.formatForDisplay(entry.endDate)}"
-                    entry.startDate.isNotBlank() -> "From ${PostingValidation.formatForDisplay(entry.startDate)}"
-                    entry.endDate.isNotBlank() -> "Until ${PostingValidation.formatForDisplay(entry.endDate)}"
-                    else -> null
-                  },
-                ).joinToString(" \u00B7 ")
-                if (meta.isNotBlank()) {
-                  Text(
-                    text = meta,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                  TextButton(onClick = { editingPosting = entry }) { Text("Edit") }
-                  if (!entry.isCurrent) {
-                    TextButton(
-                      onClick = { scope.launch { repository.setCurrentPosting(profile.id, entry.id) } },
-                    ) {
-                      Text("Mark current")
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Introductions
-      Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-      ) {
-        Column(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-          verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-          ) {
-            Text(
-              text = "Introductions",
-              style = MaterialTheme.typography.titleSmall,
-              color = MaterialTheme.colorScheme.primary,
-              fontWeight = FontWeight.SemiBold,
-            )
-            TextButton(onClick = { showAddIntroDialog = true }) {
-              Icon(Icons.Filled.Add, contentDescription = null)
-              Spacer(modifier = Modifier.width(4.dp))
-              Text("Add")
-            }
-          }
-          if (profile.introductions.isEmpty()) {
-            Text(
-              text = "No introductions recorded yet.",
-              style = MaterialTheme.typography.bodyMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          } else {
-            profile.introductions.forEachIndexed { idx, intro ->
-              if (idx > 0) HorizontalDivider()
-              val linkedProfile = intro.introducerProfileId?.let { id ->
-                profiles.firstOrNull { it.id == id }
-              }
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-              ) {
-                Column(
-                  modifier = Modifier.weight(1f),
-                  verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                  if (linkedProfile != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                      Text(
-                        text = "Introduced by ",
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
-                      )
-                      Text(
-                        text = intro.introducerName,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.clickable { onOpenProfile(linkedProfile.id) },
-                      )
-                    }
-                  } else {
-                    Text(
-                      text = "Introduced by ${intro.introducerName}",
-                      style = MaterialTheme.typography.bodyLarge,
-                      fontWeight = FontWeight.Medium,
-                    )
-                  }
-                  val sub = listOfNotNull(
-                    intro.date.takeIf { it.isNotBlank() }?.let { PostingValidation.formatForDisplay(it) },
-                    intro.contextNote.takeIf { it.isNotBlank() },
-                  ).joinToString(" \u00B7 ")
-                  if (sub.isNotBlank()) {
-                    Text(
-                      text = sub,
-                      style = MaterialTheme.typography.bodySmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                  }
-                }
-                IconButton(onClick = { pendingDeleteIntro = intro }) {
-                  Icon(
-                    imageVector = Icons.Outlined.Delete,
-                    contentDescription = "Delete introduction",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                  )
-                }
-              }
-            }
-          }
-        }
-      }
-
-      pendingDeleteIntro?.let { introToDelete ->
-        AlertDialog(
-          onDismissRequest = { pendingDeleteIntro = null },
-          title = { Text("Delete introduction?") },
-          text = {
-            Text(
-              "Remove the introduction by ${introToDelete.introducerName}? Both contact profiles and any other introductions will remain intact.",
-            )
-          },
-          confirmButton = {
-            Button(
-              onClick = {
-                pendingDeleteIntro = null
-                scope.launch {
-                  repository.deleteIntroduction(profile.id, introToDelete.id)
-                }
-              },
-            ) {
-              Text("Delete")
-            }
-          },
-          dismissButton = {
-            TextButton(onClick = { pendingDeleteIntro = null }) {
-              Text("Cancel")
-            }
-          },
-        )
-      }
-
-      if (profile.tags.isNotEmpty()) {
+      if (showHistory) {
+        // Posting and role history
         Card(
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(16.dp),
@@ -590,45 +310,7 @@ fun PersonDetailScreen(
             modifier = Modifier
               .fillMaxWidth()
               .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-          ) {
-            Text(
-              text = "Tags",
-              style = MaterialTheme.typography.titleSmall,
-              color = MaterialTheme.colorScheme.primary,
-              fontWeight = FontWeight.SemiBold,
-            )
-            FlowRow(
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
-              verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-              profile.tags.forEach { tag ->
-                AssistChip(
-                  onClick = {},
-                  label = { Text(tag) },
-                  colors = AssistChipDefaults.assistChipColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    labelColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                  ),
-                  border = null,
-                )
-              }
-            }
-          }
-        }
-      }
-
-      if (allGroups.isNotEmpty()) {
-        Card(
-          modifier = Modifier.fillMaxWidth(),
-          shape = RoundedCornerShape(16.dp),
-          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        ) {
-          Column(
-            modifier = Modifier
-              .fillMaxWidth()
-              .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
           ) {
             Row(
               modifier = Modifier.fillMaxWidth(),
@@ -636,36 +318,341 @@ fun PersonDetailScreen(
               verticalAlignment = Alignment.CenterVertically,
             ) {
               Text(
-                text = "Groups",
+                text = "Posting & role history",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.SemiBold,
               )
-              TextButton(onClick = { showGroupsDialog = true }) {
-                Text("Edit")
+              TextButton(onClick = { showAddPostingDialog = true }) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Add")
               }
             }
-            if (memberGroups.isEmpty()) {
+            if (profile.postings.isEmpty()) {
               Text(
-                text = "Not in any reusable group",
+                text = "No postings recorded yet.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
             } else {
+              val orderedPostings = profile.postings.sortedByDescending { it.isCurrent }
+              orderedPostings.forEachIndexed { idx, entry ->
+                if (idx > 0) HorizontalDivider()
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                  Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                  ) {
+                    val title = listOf(entry.designation, entry.organisation)
+                      .filter { it.isNotBlank() }
+                      .joinToString(" — ")
+                      .ifBlank { "Role" }
+                    Text(
+                      text = title,
+                      style = MaterialTheme.typography.bodyLarge,
+                      fontWeight = if (entry.isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                      modifier = Modifier.weight(1f),
+                    )
+                    if (entry.isCurrent) {
+                      AssistChip(
+                        onClick = {},
+                        label = { Text("Current") },
+                        colors = AssistChipDefaults.assistChipColors(
+                          containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                          labelColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        ),
+                        border = null,
+                      )
+                    }
+                  }
+                  val meta = listOfNotNull(
+                    entry.location.takeIf { it.isNotBlank() },
+                    when {
+                      entry.startDate.isNotBlank() && entry.endDate.isNotBlank() ->
+                        "${PostingValidation.formatForDisplay(entry.startDate)} to ${PostingValidation.formatForDisplay(entry.endDate)}"
+                      entry.startDate.isNotBlank() -> "From ${PostingValidation.formatForDisplay(entry.startDate)}"
+                      entry.endDate.isNotBlank() -> "Until ${PostingValidation.formatForDisplay(entry.endDate)}"
+                      else -> null
+                    },
+                  ).joinToString(" \u00B7 ")
+                  if (meta.isNotBlank()) {
+                    Text(
+                      text = meta,
+                      style = MaterialTheme.typography.bodySmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                  }
+                  Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { editingPosting = entry }) { Text("Edit") }
+                    if (!entry.isCurrent) {
+                      TextButton(
+                        onClick = { scope.launch { repository.setCurrentPosting(profile.id, entry.id) } },
+                      ) {
+                        Text("Mark current")
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        // Introductions
+        Card(
+          modifier = Modifier.fillMaxWidth(),
+          shape = RoundedCornerShape(16.dp),
+          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        ) {
+          Column(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+          ) {
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically,
+            ) {
+              Text(
+                text = "Introductions",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+              )
+              TextButton(onClick = { showAddIntroDialog = true }) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Add")
+              }
+            }
+            if (profile.introductions.isEmpty()) {
+              Text(
+                text = "No introductions recorded yet.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+              )
+            } else {
+              profile.introductions.forEachIndexed { idx, intro ->
+                if (idx > 0) HorizontalDivider()
+                val linkedProfile = intro.introducerProfileId?.let { id ->
+                  profiles.firstOrNull { it.id == id }
+                }
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                  Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                  ) {
+                    if (linkedProfile != null) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                          text = "Introduced by ",
+                          style = MaterialTheme.typography.bodyLarge,
+                          fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                          text = intro.introducerName,
+                          style = MaterialTheme.typography.bodyLarge,
+                          fontWeight = FontWeight.SemiBold,
+                          color = MaterialTheme.colorScheme.primary,
+                          modifier = Modifier.clickable { onOpenProfile(linkedProfile.id) },
+                        )
+                      }
+                    } else {
+                      Text(
+                        text = "Introduced by ${intro.introducerName}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                      )
+                    }
+                    val sub = listOfNotNull(
+                      intro.date.takeIf { it.isNotBlank() }?.let { PostingValidation.formatForDisplay(it) },
+                      intro.contextNote.takeIf { it.isNotBlank() },
+                    ).joinToString(" \u00B7 ")
+                    if (sub.isNotBlank()) {
+                      Text(
+                        text = sub,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                      )
+                    }
+                  }
+                  IconButton(onClick = { pendingDeleteIntro = intro }) {
+                    Icon(
+                      imageVector = Icons.Outlined.Delete,
+                      contentDescription = "Delete introduction",
+                      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        pendingDeleteIntro?.let { introToDelete ->
+          AlertDialog(
+            onDismissRequest = { pendingDeleteIntro = null },
+            title = { Text("Delete introduction?") },
+            text = {
+              Text(
+                "Remove the introduction by ${introToDelete.introducerName}? Both contact profiles and any other introductions will remain intact.",
+              )
+            },
+            confirmButton = {
+              Button(
+                onClick = {
+                  pendingDeleteIntro = null
+                  scope.launch {
+                    repository.deleteIntroduction(profile.id, introToDelete.id)
+                  }
+                },
+              ) {
+                Text("Delete")
+              }
+            },
+            dismissButton = {
+              TextButton(onClick = { pendingDeleteIntro = null }) {
+                Text("Cancel")
+              }
+            },
+          )
+        }
+      } else {
+        val resolvedPhones = profile.resolvedPhones()
+        val resolvedEmails = profile.resolvedEmails()
+        val quickDetails = buildList {
+          resolvedPhones.forEach { entry ->
+            val suffix = if (entry.isPrimary && resolvedPhones.size > 1) "${entry.label} \u00B7 Primary" else entry.label
+            add("Phone ($suffix)" to entry.value)
+          }
+          resolvedEmails.forEach { entry ->
+            val suffix = if (entry.isPrimary && resolvedEmails.size > 1) "${entry.label} \u00B7 Primary" else entry.label
+            add("Email ($suffix)" to entry.value)
+          }
+          if (profile.whereWeMet.isNotBlank()) {
+            add("Where we met" to profile.whereWeMet)
+          }
+        }
+
+        if (quickDetails.isNotEmpty()) {
+          DetailSectionCard(title = "Contact details", rows = quickDetails)
+        }
+
+        val moreDetails = listOf(
+          "Service" to profile.service,
+          "Batch" to profile.serviceBatch,
+          "Cadre" to profile.cadre,
+          "Organisation" to profile.organisation,
+          "Designation" to profile.designation,
+        ).filter { it.second.isNotBlank() }
+
+        if (moreDetails.isNotEmpty()) {
+          DetailSectionCard(title = "Work", rows = moreDetails)
+        }
+
+        val notes = profile.migrateLegacyTrainingFieldsToOtherDetails().otherDetails
+        if (notes.isNotBlank()) {
+          DetailSectionCard(
+            title = "Other details",
+            rows = listOf("Private notes" to notes),
+          )
+        }
+
+        if (profile.tags.isNotEmpty()) {
+          Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+          ) {
+            Column(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Text(
+                text = "Tags",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+              )
               FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
               ) {
-                memberGroups.forEach { group ->
+                profile.tags.forEach { tag ->
                   AssistChip(
-                    onClick = { showGroupsDialog = true },
-                    label = { Text(group.name) },
+                    onClick = {},
+                    label = { Text(tag) },
                     colors = AssistChipDefaults.assistChipColors(
-                      containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                      labelColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                      containerColor = MaterialTheme.colorScheme.primaryContainer,
+                      labelColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     ),
                     border = null,
                   )
+                }
+              }
+            }
+          }
+        }
+
+        if (allGroups.isNotEmpty()) {
+          Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+          ) {
+            Column(
+              modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+              verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text(
+                  text = "Groups",
+                  style = MaterialTheme.typography.titleSmall,
+                  color = MaterialTheme.colorScheme.primary,
+                  fontWeight = FontWeight.SemiBold,
+                )
+                TextButton(onClick = { showGroupsDialog = true }) {
+                  Text("Edit")
+                }
+              }
+              if (memberGroups.isEmpty()) {
+                Text(
+                  text = "Not in any reusable group",
+                  style = MaterialTheme.typography.bodyMedium,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+              } else {
+                FlowRow(
+                  horizontalArrangement = Arrangement.spacedBy(8.dp),
+                  verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                  memberGroups.forEach { group ->
+                    AssistChip(
+                      onClick = { showGroupsDialog = true },
+                      label = { Text(group.name) },
+                      colors = AssistChipDefaults.assistChipColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        labelColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                      ),
+                      border = null,
+                    )
+                  }
                 }
               }
             }
@@ -754,6 +741,57 @@ fun PersonDetailScreen(
           scope.launch { repository.addIntroduction(profile.id, intro) }
         },
       )
+    }
+  }
+}
+
+@Composable
+private fun ContactMethodAction(
+  label: String,
+  icon: ImageVector,
+  values: List<LabeledContactValue>,
+  onContact: (String) -> Unit,
+) {
+  if (values.isEmpty()) return
+  val primary = values.firstOrNull { it.isPrimary }
+  var showChoices by rememberSaveable { mutableStateOf(false) }
+
+  Box {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      FilledTonalButton(
+        onClick = {
+          if (primary == null) showChoices = true else onContact(primary.value)
+        },
+      ) {
+        Icon(icon, contentDescription = null)
+        Spacer(Modifier.width(6.dp))
+        Text(label)
+      }
+      if (primary != null && values.size > 1) {
+        IconButton(onClick = { showChoices = true }) {
+          Icon(Icons.Filled.ArrowDropDown, contentDescription = "$label using another contact value")
+        }
+      }
+    }
+    DropdownMenu(
+      expanded = showChoices,
+      onDismissRequest = { showChoices = false },
+      modifier = Modifier.heightIn(max = 360.dp),
+    ) {
+      values.forEach { entry ->
+        DropdownMenuItem(
+          text = {
+            Column {
+              Text(if (entry.isPrimary) "${entry.label} · Primary" else entry.label)
+              Text(entry.value, style = MaterialTheme.typography.bodyMedium)
+            }
+          },
+          onClick = {
+            showChoices = false
+            onContact(entry.value)
+          },
+        )
+      }
     }
   }
 }

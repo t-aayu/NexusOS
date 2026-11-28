@@ -251,6 +251,14 @@ fun MainNavigation(
             onBack = if (backStack.getOrNull(1) == OwnerCardRoute) null else {
               { backStack.removeLastOrNull() }
             },
+            onEdit = { backStack.add(OwnerCardEditRoute) },
+          )
+        }
+        entry<OwnerCardEditRoute> {
+          OwnerCardScreen(
+            repository = repository,
+            editing = true,
+            onBack = { backStack.removeLastOrNull() },
           )
         }
       },

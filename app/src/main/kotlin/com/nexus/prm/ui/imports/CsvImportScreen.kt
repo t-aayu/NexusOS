@@ -1,6 +1,7 @@
 package com.nexus.prm.ui.imports
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -23,7 +24,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +51,7 @@ import com.nexus.prm.data.DirectoryRepository
 import com.nexus.prm.data.DuplicateMatch
 import com.nexus.prm.data.DuplicateMatcher
 import com.nexus.prm.data.PersonProfile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -77,6 +78,7 @@ fun CsvImportScreen(
   var decisions by remember { mutableStateOf<List<CsvRowDecision>>(emptyList()) }
   var readError by remember { mutableStateOf<String?>(null) }
   var isSaving by remember { mutableStateOf(false) }
+  var saveFailed by remember { mutableStateOf(false) }
 
   val filePickerLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.OpenDocument(),
@@ -100,6 +102,8 @@ fun CsvImportScreen(
     }
   }
 
+  BackHandler(enabled = isSaving) {}
+
   val duplicateMatches = remember(decisions, existingProfiles) {
     computeCsvBatchMatches(decisions, existingProfiles)
   }
@@ -115,7 +119,7 @@ fun CsvImportScreen(
         ),
         title = { Text("Import CSV roster", fontWeight = FontWeight.SemiBold) },
         navigationIcon = {
-          IconButton(onClick = onBack) {
+          IconButton(onClick = onBack, enabled = !isSaving) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
           }
         },
@@ -190,25 +194,24 @@ fun CsvImportScreen(
           }
         }
       } else {
+        val approvedProfiles = decisions.mapIndexedNotNull { index, decision ->
+          decision.row.profile.takeIf {
+            decision.included && (index !in duplicateMatches || decision.keepIfDuplicate)
+          }
+        }
+        val skippedCount = decisions.size - approvedProfiles.size
         LazyColumn(
           modifier = Modifier.weight(1f),
           contentPadding = PaddingValues(16.dp),
           verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
           item {
-            Card(
-              modifier = Modifier.fillMaxWidth(),
-              shape = RoundedCornerShape(16.dp),
-              colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-            ) {
-              Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                  text = "Preview: ${decisions.size} valid rows · ${currentParse.errors.size} errors · ${duplicateMatches.size} possible duplicates",
-                  fontWeight = FontWeight.SemiBold,
-                  color = MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-              }
-            }
+            ImportReviewSummary(
+              ready = approvedProfiles.size,
+              skipped = skippedCount,
+              duplicates = duplicateMatches.size,
+              invalid = currentParse.errors.size,
+            )
           }
 
           if (currentParse.errors.isNotEmpty()) {
@@ -256,6 +259,7 @@ fun CsvImportScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                   Checkbox(
                     checked = decision.included,
+                    enabled = !isSaving,
                     onCheckedChange = { checked ->
                       decisions = decisions.toMutableList().also {
                         it[idx] = decision.copy(included = checked)
@@ -284,36 +288,23 @@ fun CsvImportScreen(
                 }
 
                 if (decision.included && match != null) {
-                  Text(
-                    text = "Possible duplicate: matches ${match.existingProfile.name} (${match.matchedField.label})",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.Medium,
-                  )
-                  Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                      selected = !decision.keepIfDuplicate,
-                      onClick = {
-                        decisions = decisions.toMutableList().also {
-                          it[idx] = decision.copy(keepIfDuplicate = false)
-                        }
-                      },
-                      label = { Text("Skip") },
-                    )
-                    FilterChip(
-                      selected = decision.keepIfDuplicate,
-                      onClick = {
-                        decisions = decisions.toMutableList().also {
-                          it[idx] = decision.copy(keepIfDuplicate = true)
-                        }
-                      },
-                      label = { Text("Keep separately") },
-                    )
+                  ImportDuplicateDecision(match, decision.keepIfDuplicate, enabled = !isSaving) { keep ->
+                    decisions = decisions.toMutableList().also {
+                      it[idx] = decision.copy(keepIfDuplicate = keep)
+                    }
                   }
                 }
               }
             }
           }
+        }
+
+        if (saveFailed) {
+          Text(
+            "Could not save this import. Review choices are still here.",
+            modifier = Modifier.padding(horizontal = 16.dp),
+            color = MaterialTheme.colorScheme.error,
+          )
         }
 
         Row(
@@ -334,26 +325,22 @@ fun CsvImportScreen(
             modifier = Modifier.weight(1f),
             onClick = {
               isSaving = true
+              saveFailed = false
               scope.launch {
-                val toSave = mutableListOf<PersonProfile>()
-                var skipped = 0
-                decisions.forEachIndexed { idx, decision ->
-                  val match = duplicateMatches[idx]
-                  if (!decision.included || (match != null && !decision.keepIfDuplicate)) {
-                    skipped++
-                  } else {
-                    toSave += decision.row.profile
-                  }
+                try {
+                  val saved = repository.saveProfilesBatch(approvedProfiles)
+                  onImported("${saved.size} saved, $skippedCount skipped, ${currentParse.errors.size} invalid.")
+                } catch (cancelled: CancellationException) {
+                  throw cancelled
+                } catch (_: Exception) {
+                  saveFailed = true
+                } finally {
+                  isSaving = false
                 }
-                val saved = repository.saveProfilesBatch(toSave)
-                isSaving = false
-                onImported(
-                  "CSV import complete: ${saved.size} saved, $skipped skipped, ${currentParse.errors.size} invalid.",
-                )
               }
             },
           ) {
-            Text("Import")
+            Text(if (approvedProfiles.isEmpty()) "Done" else "Save contacts")
           }
         }
       }

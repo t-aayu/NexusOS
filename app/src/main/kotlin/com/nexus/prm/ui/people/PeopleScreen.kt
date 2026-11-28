@@ -81,6 +81,7 @@ import com.nexus.prm.data.ContactShareHelper
 import com.nexus.prm.data.DirectorySearch
 import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.ui.components.ProfileAvatar
+import com.nexus.prm.ui.imports.ImportSourceSheet
 import com.nexus.prm.ui.theme.NexusFrostedStyle
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -102,7 +103,7 @@ fun PeopleScreen(
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
   var showFilters by rememberSaveable { mutableStateOf(false) }
-  var importMenuExpanded by remember { mutableStateOf(false) }
+  var showImportSources by rememberSaveable { mutableStateOf(false) }
   var pendingDeleteProfile by remember { mutableStateOf<PersonProfile?>(null) }
 
   val filterCount = listOf(
@@ -139,37 +140,8 @@ fun PeopleScreen(
           }
         },
         actions = {
-          if (onImportContactsClick != null && onImportCsvClick != null && onImportVCardClick != null) {
-            Box {
-              TextButton(onClick = { importMenuExpanded = true }) { Text("Import") }
-              DropdownMenu(
-                expanded = importMenuExpanded,
-                onDismissRequest = { importMenuExpanded = false },
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-              ) {
-                DropdownMenuItem(
-                  text = { Text("Import from Android contacts") },
-                  onClick = {
-                    importMenuExpanded = false
-                    onImportContactsClick()
-                  },
-                )
-                DropdownMenuItem(
-                  text = { Text("Import CSV roster") },
-                  onClick = {
-                    importMenuExpanded = false
-                    onImportCsvClick()
-                  },
-                )
-                DropdownMenuItem(
-                  text = { Text("Import vCard") },
-                  onClick = {
-                    importMenuExpanded = false
-                    onImportVCardClick()
-                  },
-                )
-              }
-            }
+          if (onImportContactsClick != null) {
+            TextButton(onClick = { showImportSources = true }) { Text("Import") }
           }
           if (onSettingsClick != null) {
             IconButton(onClick = onSettingsClick) {
@@ -323,6 +295,24 @@ fun PeopleScreen(
         }
       }
     }
+  }
+
+  if (showImportSources && onImportContactsClick != null && onImportCsvClick != null && onImportVCardClick != null) {
+    ImportSourceSheet(
+      onDismiss = { showImportSources = false },
+      onContacts = {
+        showImportSources = false
+        onImportContactsClick()
+      },
+      onCsv = {
+        showImportSources = false
+        onImportCsvClick()
+      },
+      onVCard = {
+        showImportSources = false
+        onImportVCardClick()
+      },
+    )
   }
 
   if (showFilters) {
