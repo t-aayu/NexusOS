@@ -3,8 +3,8 @@ package com.nexus.prm.ui.profile
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -192,7 +192,10 @@ fun PersonDetailScreen(
       verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
       Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+          .fillMaxWidth()
+          .background(NexusFrostedStyle.surfaceColor(MaterialTheme.colorScheme), RoundedCornerShape(20.dp))
+          .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
       ) {
         ProfileAvatar(
@@ -213,7 +216,7 @@ fun PersonDetailScreen(
           currentRole?.designation?.takeIf { it.isNotBlank() } ?: profile.designation.takeIf { it.isNotBlank() },
           currentRole?.organisation?.takeIf { it.isNotBlank() } ?: profile.organisation.takeIf { it.isNotBlank() },
           currentRole?.location?.takeIf { it.isNotBlank() },
-        ).joinToString(" · ")
+        ).joinToString(" \u00B7 ")
         if (roleHeadline.isNotBlank()) {
           Spacer(modifier = Modifier.height(4.dp))
           Text(
@@ -247,7 +250,10 @@ fun PersonDetailScreen(
         val hasEmail = primaryEmail.isNotBlank()
         if (hasPhone || hasEmail) {
           Spacer(modifier = Modifier.height(14.dp))
-          Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+          FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+          ) {
             if (hasPhone) {
               Button(
                 colors = ButtonDefaults.buttonColors(
@@ -352,8 +358,7 @@ fun PersonDetailScreen(
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
-        colors = NexusFrostedStyle.cardColors(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
       ) {
         Column(
           modifier = Modifier
@@ -425,7 +430,7 @@ fun PersonDetailScreen(
                     entry.endDate.isNotBlank() -> "Until ${PostingValidation.formatForDisplay(entry.endDate)}"
                     else -> null
                   },
-                ).joinToString(" · ")
+                ).joinToString(" \u00B7 ")
                 if (meta.isNotBlank()) {
                   Text(
                     text = meta,
@@ -453,8 +458,7 @@ fun PersonDetailScreen(
       Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
-        colors = NexusFrostedStyle.cardColors(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
       ) {
         Column(
           modifier = Modifier
@@ -525,7 +529,7 @@ fun PersonDetailScreen(
                   val sub = listOfNotNull(
                     intro.date.takeIf { it.isNotBlank() }?.let { PostingValidation.formatForDisplay(it) },
                     intro.contextNote.takeIf { it.isNotBlank() },
-                  ).joinToString(" · ")
+                  ).joinToString(" \u00B7 ")
                   if (sub.isNotBlank()) {
                     Text(
                       text = sub,
@@ -580,8 +584,7 @@ fun PersonDetailScreen(
         Card(
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(16.dp),
-          border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
-          colors = NexusFrostedStyle.cardColors(),
+          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         ) {
           Column(
             modifier = Modifier
@@ -619,8 +622,7 @@ fun PersonDetailScreen(
         Card(
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(16.dp),
-          border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
-          colors = NexusFrostedStyle.cardColors(),
+          colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         ) {
           Column(
             modifier = Modifier
@@ -1008,8 +1010,7 @@ private fun DetailSectionCard(
   Card(
     modifier = Modifier.fillMaxWidth(),
     shape = RoundedCornerShape(16.dp),
-    border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
-    colors = NexusFrostedStyle.cardColors(),
+    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
   ) {
     Column(
       modifier = Modifier

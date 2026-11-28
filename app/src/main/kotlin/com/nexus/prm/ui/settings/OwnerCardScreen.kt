@@ -34,7 +34,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -63,7 +62,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun OwnerCardScreen(
   repository: DirectoryRepository,
-  onBack: () -> Unit,
+  onBack: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
 ) {
   val context = LocalContext.current
@@ -94,8 +93,10 @@ fun OwnerCardScreen(
         colors = NexusFrostedStyle.topAppBarColors(),
         title = { Text("My contact card", fontWeight = FontWeight.SemiBold) },
         navigationIcon = {
-          IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+          onBack?.let { back ->
+            IconButton(onClick = back) {
+              Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
           }
         },
       )

@@ -27,3 +27,5 @@ import kotlinx.serialization.Serializable
 @Serializable data object Groups : NavKey
 
 @Serializable data object OwnerCardRoute : NavKey
+
+@Serializable data class GroupMembers(val groupId: String) : NavKey

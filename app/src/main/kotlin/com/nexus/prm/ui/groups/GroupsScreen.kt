@@ -10,18 +10,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.GroupAdd
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -38,37 +37,40 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nexus.prm.data.ContactGroup
 import com.nexus.prm.data.DirectoryRepository
+import com.nexus.prm.ui.theme.NexusFrostedStyle
+import java.io.IOException
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GroupsScreen(
   repository: DirectoryRepository,
-  onBack: () -> Unit,
+  onOpenGroup: (String) -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val scope = rememberCoroutineScope()
   val groups by repository.groups.collectAsStateWithLifecycle()
-  val profiles by repository.profiles.collectAsStateWithLifecycle()
 
   var showCreateDialog by remember { mutableStateOf(false) }
   var renamingGroup by remember { mutableStateOf<ContactGroup?>(null) }
   var deletingGroup by remember { mutableStateOf<ContactGroup?>(null) }
-  var editingMembersGroup by remember { mutableStateOf<ContactGroup?>(null) }
   var errorText by remember { mutableStateOf<String?>(null) }
 
   Scaffold(
@@ -76,20 +78,13 @@ fun GroupsScreen(
     containerColor = MaterialTheme.colorScheme.background,
     topBar = {
       TopAppBar(
-        colors = TopAppBarDefaults.topAppBarColors(
-          containerColor = MaterialTheme.colorScheme.background,
-          titleContentColor = MaterialTheme.colorScheme.onBackground,
-        ),
+        colors = NexusFrostedStyle.topAppBarColors(),
         title = { Text("Groups", fontWeight = FontWeight.SemiBold) },
-        navigationIcon = {
-          IconButton(onClick = onBack) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-          }
-        },
       )
     },
     floatingActionButton = {
       ExtendedFloatingActionButton(
+        modifier = Modifier.semantics { contentDescription = "New group" },
         onClick = {
           errorText = null
           showCreateDialog = true
@@ -143,16 +138,18 @@ fun GroupsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
               ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                  modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClickLabel = "View members") { onOpenGroup(group.id) }
+                    .padding(vertical = 8.dp),
+                ) {
                   Text(group.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                   Text(
-                    text = "${group.memberIds.size} members",
+                    text = if (group.memberIds.size == 1) "1 member" else "${group.memberIds.size} members",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                   )
-                }
-                IconButton(onClick = { editingMembersGroup = group }) {
-                  Icon(Icons.Outlined.GroupAdd, contentDescription = "Edit members")
                 }
                 IconButton(
                   onClick = {
@@ -227,56 +224,88 @@ fun GroupsScreen(
       },
     )
   }
+}
 
-  editingMembersGroup?.let { group ->
-    var selectedIds by remember(group.id) { mutableStateOf(group.memberIds.toSet()) }
-    AlertDialog(
-      onDismissRequest = { editingMembersGroup = null },
-      title = { Text("Members: ${group.name}") },
-      text = {
-        if (profiles.isEmpty()) {
-          Text("No people in your directory yet.")
+@Composable
+internal fun ManageGroupMembersDialog(
+  repository: DirectoryRepository,
+  group: ContactGroup,
+  onDismiss: () -> Unit,
+) {
+  val profiles by repository.profiles.collectAsStateWithLifecycle()
+  val scope = rememberCoroutineScope()
+  var selectedIds by rememberSaveable(group.id) { mutableStateOf(ArrayList(group.memberIds)) }
+  var query by rememberSaveable(group.id) { mutableStateOf("") }
+  var saving by remember { mutableStateOf(false) }
+  var saveFailed by remember { mutableStateOf(false) }
+  val visibleProfiles = remember(profiles, query) {
+    profiles.filter { it.name.contains(query.trim(), ignoreCase = true) }.sortedBy { it.name.lowercase() }
+  }
+
+  AlertDialog(
+    onDismissRequest = { if (!saving) onDismiss() },
+    title = { Text("Manage members") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+          value = query,
+          onValueChange = { query = it },
+          label = { Text("Find people") },
+          enabled = !saving,
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+        Text("${selectedIds.size} selected")
+        if (visibleProfiles.isEmpty()) {
+          Text(if (profiles.isEmpty()) "Your directory is empty." else "No matching people.")
         } else {
-          LazyColumn(modifier = Modifier.height(320.dp)) {
-            items(profiles, key = { it.id }) { person ->
+          LazyColumn(modifier = Modifier.heightIn(max = 280.dp)) {
+            items(visibleProfiles, key = { it.id }) { person ->
               val checked = person.id in selectedIds
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .clickable {
-                    selectedIds = if (checked) selectedIds - person.id else selectedIds + person.id
-                  }
-                  .padding(vertical = 4.dp),
+                  .heightIn(min = 48.dp)
+                  .toggleable(value = checked, enabled = !saving, role = Role.Checkbox) { isChecked ->
+                    selectedIds = ArrayList(if (isChecked) selectedIds + person.id else selectedIds - person.id)
+                  },
                 verticalAlignment = Alignment.CenterVertically,
               ) {
-                Checkbox(
-                  checked = checked,
-                  onCheckedChange = { isChecked ->
-                    selectedIds = if (isChecked) selectedIds + person.id else selectedIds - person.id
-                  },
-                )
-                Spacer(modifier = Modifier.width(8.dp))
+                Checkbox(checked = checked, onCheckedChange = null, enabled = !saving)
+                Spacer(modifier = Modifier.width(12.dp))
                 Text(person.name, style = MaterialTheme.typography.bodyLarge)
               }
             }
           }
         }
-      },
-      confirmButton = {
-        Button(
-          onClick = {
-            editingMembersGroup = null
-            scope.launch { repository.setGroupMembers(group.id, selectedIds.toList()) }
-          },
-        ) {
-          Text("Save")
+        if (saveFailed) {
+          Text("Could not save members. Try again.", color = MaterialTheme.colorScheme.error)
         }
-      },
-      dismissButton = {
-        TextButton(onClick = { editingMembersGroup = null }) { Text("Cancel") }
-      },
-    )
-  }
+      }
+    },
+    confirmButton = {
+      Button(
+        enabled = !saving,
+        onClick = {
+          saving = true
+          saveFailed = false
+          scope.launch {
+            try {
+              repository.setGroupMembers(group.id, selectedIds)
+              onDismiss()
+            } catch (_: IOException) {
+              saveFailed = true
+            } finally {
+              saving = false
+            }
+          }
+        },
+      ) { Text("Save") }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") }
+    },
+  )
 }
 
 @Composable

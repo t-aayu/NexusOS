@@ -27,12 +27,14 @@ import com.nexus.prm.ui.theme.isEffectiveDark
 import com.nexus.prm.widget.QuickCaptureWidgetProvider
 
 class MainActivity : ComponentActivity() {
+  private var launchSequence = 0
   private var quickCaptureSignal by mutableIntStateOf(0)
   private var callerProfileSignal by mutableStateOf<Pair<Int, String>?>(null)
   private var quickImportSignal by mutableStateOf<Triple<Int, String?, String?>?>(null)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    launchSequence = savedInstanceState?.getInt(LAUNCH_SEQUENCE_KEY) ?: 0
     if (savedInstanceState == null) {
       consumeLaunchIntent(intent)
     }
@@ -71,6 +73,11 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  override fun onSaveInstanceState(outState: Bundle) {
+    super.onSaveInstanceState(outState)
+    outState.putInt(LAUNCH_SEQUENCE_KEY, launchSequence)
+  }
+
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
@@ -80,27 +87,27 @@ class MainActivity : ComponentActivity() {
   private fun consumeLaunchIntent(incoming: Intent?) {
     when (incoming?.action) {
       QuickCaptureWidgetProvider.ACTION_QUICK_CAPTURE_ADD_PERSON -> {
-        quickCaptureSignal += 1
+        quickCaptureSignal = ++launchSequence
         incoming.action = null
       }
       CallerIdUnlockActivity.ACTION_OPEN_CALLER_PROFILE -> {
         val profileId = incoming.getStringExtra(CallerIdUnlockActivity.EXTRA_PROFILE_ID)?.trim().orEmpty()
         if (profileId.isNotEmpty()) {
-          val nextToken = (callerProfileSignal?.first ?: 0) + 1
+          val nextToken = ++launchSequence
           callerProfileSignal = nextToken to profileId
         }
         incoming.action = null
       }
       Intent.ACTION_PROCESS_TEXT -> {
         val selected = incoming.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
-        val nextToken = (quickImportSignal?.first ?: 0) + 1
+        val nextToken = ++launchSequence
         quickImportSignal = Triple(nextToken, selected ?: "", null)
         incoming.action = null
       }
       Intent.ACTION_SEND -> {
         val streamUri = readStreamUri(incoming)
         val sharedText = incoming.getStringExtra(Intent.EXTRA_TEXT)
-        val nextToken = (quickImportSignal?.first ?: 0) + 1
+        val nextToken = ++launchSequence
         if (streamUri != null) {
           quickImportSignal = Triple(nextToken, null, streamUri.toString())
         } else {
@@ -111,7 +118,7 @@ class MainActivity : ComponentActivity() {
       Intent.ACTION_VIEW -> {
         val dataUri = incoming.data
         if (dataUri != null) {
-          val nextToken = (quickImportSignal?.first ?: 0) + 1
+          val nextToken = ++launchSequence
           quickImportSignal = Triple(nextToken, null, dataUri.toString())
           incoming.action = null
         }
@@ -126,4 +133,8 @@ class MainActivity : ComponentActivity() {
       @Suppress("DEPRECATION")
       intent.getParcelableExtra(Intent.EXTRA_STREAM)
     }
+
+  private companion object {
+    const val LAUNCH_SEQUENCE_KEY = "launch_sequence"
+  }
 }

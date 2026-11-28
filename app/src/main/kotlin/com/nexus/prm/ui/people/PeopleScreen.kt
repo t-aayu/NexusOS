@@ -1,13 +1,14 @@
 package com.nexus.prm.ui.people
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
@@ -18,21 +19,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.ContactPage
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Settings
@@ -51,23 +52,25 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,7 +79,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nexus.prm.data.ContactGroup
 import com.nexus.prm.data.ContactShareHelper
 import com.nexus.prm.data.DirectorySearch
-import com.nexus.prm.data.PersonCategory
 import com.nexus.prm.data.PersonProfile
 import com.nexus.prm.ui.components.ProfileAvatar
 import com.nexus.prm.ui.theme.NexusFrostedStyle
@@ -85,20 +87,31 @@ import com.nexus.prm.ui.theme.NexusFrostedStyle
 @Composable
 fun PeopleScreen(
   viewModel: PeopleViewModel,
-  onAddClick: () -> Unit,
+  onAddClick: (() -> Unit)? = null,
   onPersonClick: (String) -> Unit,
   onEditClick: (String) -> Unit,
-  onSettingsClick: () -> Unit,
-  onOwnerCardClick: () -> Unit,
-  onImportContactsClick: () -> Unit,
-  onImportCsvClick: () -> Unit,
-  onImportVCardClick: () -> Unit,
-  onManageGroupsClick: () -> Unit,
+  onSettingsClick: (() -> Unit)? = null,
+  onImportContactsClick: (() -> Unit)? = null,
+  onImportCsvClick: (() -> Unit)? = null,
+  onImportVCardClick: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
+  listState: LazyListState = rememberLazyListState(),
+  group: ContactGroup? = null,
+  onBack: (() -> Unit)? = null,
+  onManageMembers: (() -> Unit)? = null,
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-  var moreMenuExpanded by remember { mutableStateOf(false) }
+  var showFilters by rememberSaveable { mutableStateOf(false) }
+  var importMenuExpanded by remember { mutableStateOf(false) }
   var pendingDeleteProfile by remember { mutableStateOf<PersonProfile?>(null) }
+
+  val filterCount = listOf(
+    uiState.filter.favouritesOnly,
+    uiState.filter.recentlyAddedOnly,
+    uiState.filter.selectedCategoryLabel != null,
+    uiState.filter.selectedTrainingGroup != null,
+    uiState.filter.selectedReusableGroupId != null,
+  ).count { it }
 
   Scaffold(
     modifier = modifier.fillMaxSize(),
@@ -108,7 +121,7 @@ fun PeopleScreen(
         colors = NexusFrostedStyle.topAppBarColors(),
         title = {
           Column {
-            Text("People", fontWeight = FontWeight.Bold)
+            Text(group?.name ?: "People", fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (uiState.totalCount > 0) {
               Text(
                 text = "${uiState.visibleProfiles.size} of ${uiState.totalCount}",
@@ -118,74 +131,66 @@ fun PeopleScreen(
             }
           }
         },
+        navigationIcon = {
+          onBack?.let { back ->
+            IconButton(onClick = back) {
+              Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+          }
+        },
         actions = {
-          Box {
-            IconButton(onClick = { moreMenuExpanded = true }) {
+          if (onImportContactsClick != null && onImportCsvClick != null && onImportVCardClick != null) {
+            Box {
+              TextButton(onClick = { importMenuExpanded = true }) { Text("Import") }
+              DropdownMenu(
+                expanded = importMenuExpanded,
+                onDismissRequest = { importMenuExpanded = false },
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+              ) {
+                DropdownMenuItem(
+                  text = { Text("Import from Android contacts") },
+                  onClick = {
+                    importMenuExpanded = false
+                    onImportContactsClick()
+                  },
+                )
+                DropdownMenuItem(
+                  text = { Text("Import CSV roster") },
+                  onClick = {
+                    importMenuExpanded = false
+                    onImportCsvClick()
+                  },
+                )
+                DropdownMenuItem(
+                  text = { Text("Import vCard") },
+                  onClick = {
+                    importMenuExpanded = false
+                    onImportVCardClick()
+                  },
+                )
+              }
+            }
+          }
+          if (onSettingsClick != null) {
+            IconButton(onClick = onSettingsClick) {
               Icon(
-                imageVector = Icons.Filled.MoreVert,
-                contentDescription = "More actions",
+                imageVector = Icons.Outlined.Settings,
+                contentDescription = "Settings",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
               )
             }
-            DropdownMenu(
-              expanded = moreMenuExpanded,
-              onDismissRequest = { moreMenuExpanded = false },
-              containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-            ) {
-              DropdownMenuItem(
-                text = { Text("Import from Android contacts") },
-                onClick = {
-                  moreMenuExpanded = false
-                  onImportContactsClick()
-                },
-              )
-              DropdownMenuItem(
-                text = { Text("Import CSV roster") },
-                onClick = {
-                  moreMenuExpanded = false
-                  onImportCsvClick()
-                },
-              )
-              DropdownMenuItem(
-                text = { Text("Import vCard") },
-                onClick = {
-                  moreMenuExpanded = false
-                  onImportVCardClick()
-                },
-              )
-              DropdownMenuItem(
-                text = { Text("Manage groups") },
-                onClick = {
-                  moreMenuExpanded = false
-                  onManageGroupsClick()
-                },
-              )
-            }
-          }
-          IconButton(onClick = onOwnerCardClick) {
-            Icon(
-              imageVector = Icons.Outlined.ContactPage,
-              contentDescription = "My contact card",
-              tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          }
-          IconButton(onClick = onSettingsClick) {
-            Icon(
-              imageVector = Icons.Outlined.Settings,
-              contentDescription = "Settings",
-              tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
           }
         },
       )
     },
     floatingActionButton = {
-      ExtendedFloatingActionButton(
+      if (onAddClick != null) ExtendedFloatingActionButton(
+        modifier = Modifier.semantics { contentDescription = "Add person" },
         onClick = onAddClick,
         containerColor = MaterialTheme.colorScheme.primary,
         contentColor = MaterialTheme.colorScheme.onPrimary,
         icon = { Icon(Icons.Filled.Add, contentDescription = null) },
-        text = { Text("Add", fontWeight = FontWeight.SemiBold) },
+        text = { Text("Add person", fontWeight = FontWeight.SemiBold) },
       )
     },
   ) { innerPadding ->
@@ -194,16 +199,13 @@ fun PeopleScreen(
         .fillMaxSize()
         .padding(innerPadding),
     ) {
-      androidx.compose.material3.Surface(
+      Surface(
         modifier = Modifier
           .fillMaxWidth()
           .padding(horizontal = 16.dp, vertical = 6.dp)
           .defaultMinSize(minHeight = 48.dp),
         shape = RoundedCornerShape(16.dp),
-        color = NexusFrostedStyle.surfaceColor(MaterialTheme.colorScheme),
-        border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
-        tonalElevation = NexusFrostedStyle.TonalElevation,
-        shadowElevation = NexusFrostedStyle.ShadowElevation,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
       ) {
         Row(
           modifier = Modifier
@@ -224,7 +226,7 @@ fun PeopleScreen(
           ) {
             if (uiState.filter.query.isEmpty()) {
               Text(
-                text = "Search people",
+                text = if (group == null) "Search people" else "Search members",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -240,13 +242,14 @@ fun PeopleScreen(
               ),
               cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
               keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-              modifier = Modifier.fillMaxWidth(),
+              modifier = Modifier.fillMaxWidth().semantics {
+                contentDescription = if (group == null) "Search people" else "Search members"
+              },
             )
           }
           if (uiState.filter.query.isNotEmpty()) {
             IconButton(
               onClick = { viewModel.onQueryChange("") },
-              modifier = Modifier.size(32.dp),
             ) {
               Icon(
                 imageVector = Icons.Filled.Close,
@@ -259,17 +262,21 @@ fun PeopleScreen(
         }
       }
 
-      FilterBar(
-        filter = uiState.filter,
-        availableCategories = uiState.availableCategories,
-        trainingGroups = uiState.trainingGroups,
-        reusableGroups = uiState.reusableGroups,
-        onToggleFavourites = viewModel::onToggleFavouritesOnly,
-        onToggleRecent = viewModel::onToggleRecentlyAdded,
-        onSelectCategory = viewModel::onCategorySelected,
-        onSelectGroup = viewModel::onTrainingGroupSelected,
-        onSelectReusableGroup = viewModel::onReusableGroupSelected,
-      )
+      Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        if (onManageMembers != null) {
+          TextButton(onClick = onManageMembers) { Text("Manage members") }
+        } else {
+          FilterChip(
+            selected = filterCount > 0,
+            onClick = { showFilters = true },
+            label = { Text(if (filterCount == 0) "Filters" else "Filters ($filterCount)") },
+          )
+        }
+      }
 
       if (uiState.visibleProfiles.isEmpty()) {
         EmptyPeopleState(
@@ -289,8 +296,9 @@ fun PeopleScreen(
         }
         LazyColumn(
           modifier = Modifier.fillMaxSize(),
-          contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
-          verticalArrangement = Arrangement.spacedBy(8.dp),
+          state = listState,
+          contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = if (group == null) 88.dp else 16.dp),
+          verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
           items(uiState.visibleProfiles, key = { it.id }) { profile ->
             val context = LocalContext.current
@@ -317,6 +325,38 @@ fun PeopleScreen(
     }
   }
 
+  if (showFilters) {
+    ModalBottomSheet(onDismissRequest = { showFilters = false }) {
+      Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+        Text(
+          "Filter people",
+          modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+          style = MaterialTheme.typography.titleLarge,
+        )
+        DirectoryFilterOptions(
+          filter = uiState.filter,
+          availableCategories = uiState.availableCategories,
+          trainingGroups = uiState.trainingGroups,
+          reusableGroups = uiState.reusableGroups,
+          onToggleFavourites = viewModel::onToggleFavouritesOnly,
+          onToggleRecent = viewModel::onToggleRecentlyAdded,
+          onSelectCategory = viewModel::onCategorySelected,
+          onSelectGroup = viewModel::onTrainingGroupSelected,
+          onSelectReusableGroup = viewModel::onReusableGroupSelected,
+        )
+        Row(
+          modifier = Modifier.fillMaxWidth().padding(16.dp),
+          horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+          TextButton(onClick = viewModel::clearDirectoryFilters, enabled = filterCount > 0) {
+            Text("Reset filters")
+          }
+          Button(onClick = { showFilters = false }) { Text("Done") }
+        }
+      }
+    }
+  }
+
   pendingDeleteProfile?.let { target ->
     AlertDialog(
       onDismissRequest = { pendingDeleteProfile = null },
@@ -338,7 +378,7 @@ fun PeopleScreen(
 }
 
 @Composable
-private fun FilterBar(
+private fun DirectoryFilterOptions(
   filter: PeopleFilterState,
   availableCategories: List<String>,
   trainingGroups: List<String>,
@@ -362,159 +402,149 @@ private fun FilterBar(
     selectedTrailingIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
   )
 
-  LazyRow(
-    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+  FlowRow(
+    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
     horizontalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    item {
-      FilterChip(
-        selected = filter.favouritesOnly,
-        onClick = onToggleFavourites,
-        colors = chipColors,
-        label = { Text("Favourites") },
-        leadingIcon = {
-          Icon(
-            imageVector = if (filter.favouritesOnly) Icons.Filled.Star else Icons.Outlined.StarOutline,
-            contentDescription = null,
-          )
-        },
-      )
-    }
-
-    item {
-      FilterChip(
-        selected = filter.recentlyAddedOnly,
-        onClick = onToggleRecent,
-        colors = chipColors,
-        label = { Text("Recently added") },
-        leadingIcon = {
-          Icon(
-            imageVector = Icons.Filled.Schedule,
-            contentDescription = null,
-          )
-        },
-      )
-    }
-
-    item {
-      Box {
-        FilterChip(
-          selected = filter.selectedCategoryLabel != null,
-          onClick = { categoryMenuExpanded = true },
-          colors = chipColors,
-          label = { Text(filter.selectedCategoryLabel ?: "Category") },
-          leadingIcon = if (filter.selectedCategoryLabel != null) {
-            { Icon(Icons.Filled.Check, contentDescription = null) }
-          } else null,
-          trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
+    FilterChip(
+      selected = filter.favouritesOnly,
+      onClick = onToggleFavourites,
+      colors = chipColors,
+      label = { Text("Favourites") },
+      leadingIcon = {
+        Icon(
+          imageVector = if (filter.favouritesOnly) Icons.Filled.Star else Icons.Outlined.StarOutline,
+          contentDescription = null,
         )
-        DropdownMenu(
-          expanded = categoryMenuExpanded,
-          onDismissRequest = { categoryMenuExpanded = false },
-          containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ) {
+      },
+    )
+
+    FilterChip(
+      selected = filter.recentlyAddedOnly,
+      onClick = onToggleRecent,
+      colors = chipColors,
+      label = { Text("Recently added") },
+      leadingIcon = {
+        Icon(
+          imageVector = Icons.Filled.Schedule,
+          contentDescription = null,
+        )
+      },
+    )
+
+    Box {
+      FilterChip(
+        selected = filter.selectedCategoryLabel != null,
+        onClick = { categoryMenuExpanded = true },
+        colors = chipColors,
+        label = { Text(filter.selectedCategoryLabel ?: "Category") },
+        leadingIcon = if (filter.selectedCategoryLabel != null) {
+          { Icon(Icons.Filled.Check, contentDescription = null) }
+        } else null,
+        trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
+      )
+      DropdownMenu(
+        expanded = categoryMenuExpanded,
+        onDismissRequest = { categoryMenuExpanded = false },
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+      ) {
+        DropdownMenuItem(
+          text = { Text("All categories") },
+          onClick = {
+            onSelectCategory(null)
+            categoryMenuExpanded = false
+          },
+        )
+        availableCategories.forEach { categoryLabel ->
           DropdownMenuItem(
-            text = { Text("All categories") },
+            text = { Text(categoryLabel) },
+            trailingIcon = if (filter.selectedCategoryLabel.equals(categoryLabel, ignoreCase = true)) {
+              { Icon(Icons.Filled.Check, contentDescription = null) }
+            } else null,
             onClick = {
-              onSelectCategory(null)
+              onSelectCategory(categoryLabel)
               categoryMenuExpanded = false
             },
           )
-          availableCategories.forEach { categoryLabel ->
-            DropdownMenuItem(
-              text = { Text(categoryLabel) },
-              trailingIcon = if (filter.selectedCategoryLabel.equals(categoryLabel, ignoreCase = true)) {
-                { Icon(Icons.Filled.Check, contentDescription = null) }
-              } else null,
-              onClick = {
-                onSelectCategory(categoryLabel)
-                categoryMenuExpanded = false
-              },
-            )
-          }
         }
       }
     }
 
-    item {
-      Box {
-        FilterChip(
-          selected = filter.selectedTrainingGroup != null,
-          onClick = { groupMenuExpanded = true },
-          enabled = trainingGroups.isNotEmpty() || filter.selectedTrainingGroup != null,
-          colors = chipColors,
-          label = { Text(filter.selectedTrainingGroup ?: "Training group") },
-          leadingIcon = if (filter.selectedTrainingGroup != null) {
-            { Icon(Icons.Filled.Check, contentDescription = null) }
-          } else null,
-          trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
+    Box {
+      FilterChip(
+        selected = filter.selectedTrainingGroup != null,
+        onClick = { groupMenuExpanded = true },
+        enabled = trainingGroups.isNotEmpty() || filter.selectedTrainingGroup != null,
+        colors = chipColors,
+        label = { Text(filter.selectedTrainingGroup ?: "Training group") },
+        leadingIcon = if (filter.selectedTrainingGroup != null) {
+          { Icon(Icons.Filled.Check, contentDescription = null) }
+        } else null,
+        trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
+      )
+      DropdownMenu(
+        expanded = groupMenuExpanded,
+        onDismissRequest = { groupMenuExpanded = false },
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+      ) {
+        DropdownMenuItem(
+          text = { Text("All groups") },
+          onClick = {
+            onSelectGroup(null)
+            groupMenuExpanded = false
+          },
         )
-        DropdownMenu(
-          expanded = groupMenuExpanded,
-          onDismissRequest = { groupMenuExpanded = false },
-          containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ) {
+        trainingGroups.forEach { group ->
           DropdownMenuItem(
-            text = { Text("All groups") },
+            text = { Text(group) },
+            trailingIcon = if (filter.selectedTrainingGroup?.equals(group, ignoreCase = true) == true) {
+              { Icon(Icons.Filled.Check, contentDescription = null) }
+            } else null,
             onClick = {
-              onSelectGroup(null)
+              onSelectGroup(group)
               groupMenuExpanded = false
             },
           )
-          trainingGroups.forEach { group ->
-            DropdownMenuItem(
-              text = { Text(group) },
-              trailingIcon = if (filter.selectedTrainingGroup?.equals(group, ignoreCase = true) == true) {
-                { Icon(Icons.Filled.Check, contentDescription = null) }
-              } else null,
-              onClick = {
-                onSelectGroup(group)
-                groupMenuExpanded = false
-              },
-            )
-          }
         }
       }
     }
 
     if (reusableGroups.isNotEmpty() || filter.selectedReusableGroupId != null) {
-      item {
-        val activeReusableGroup = reusableGroups.firstOrNull { it.id == filter.selectedReusableGroupId }
-        Box {
-          FilterChip(
-            selected = activeReusableGroup != null,
-            onClick = { reusableGroupMenuExpanded = true },
-            colors = chipColors,
-            label = { Text(activeReusableGroup?.name ?: "Group") },
-            leadingIcon = if (activeReusableGroup != null) {
-              { Icon(Icons.Filled.Check, contentDescription = null) }
-            } else null,
-            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
+      val activeReusableGroup = reusableGroups.firstOrNull { it.id == filter.selectedReusableGroupId }
+      Box {
+        FilterChip(
+          selected = activeReusableGroup != null,
+          onClick = { reusableGroupMenuExpanded = true },
+          colors = chipColors,
+          label = { Text(activeReusableGroup?.name ?: "Group") },
+          leadingIcon = if (activeReusableGroup != null) {
+            { Icon(Icons.Filled.Check, contentDescription = null) }
+          } else null,
+          trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null) },
+        )
+        DropdownMenu(
+          expanded = reusableGroupMenuExpanded,
+          onDismissRequest = { reusableGroupMenuExpanded = false },
+          containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        ) {
+          DropdownMenuItem(
+            text = { Text("All groups") },
+            onClick = {
+              onSelectReusableGroup(null)
+              reusableGroupMenuExpanded = false
+            },
           )
-          DropdownMenu(
-            expanded = reusableGroupMenuExpanded,
-            onDismissRequest = { reusableGroupMenuExpanded = false },
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-          ) {
+          reusableGroups.forEach { group ->
             DropdownMenuItem(
-              text = { Text("All groups") },
+              text = { Text(group.name) },
+              trailingIcon = if (filter.selectedReusableGroupId == group.id) {
+                { Icon(Icons.Filled.Check, contentDescription = null) }
+              } else null,
               onClick = {
-                onSelectReusableGroup(null)
+                onSelectReusableGroup(group.id)
                 reusableGroupMenuExpanded = false
               },
             )
-            reusableGroups.forEach { group ->
-              DropdownMenuItem(
-                text = { Text(group.name) },
-                trailingIcon = if (filter.selectedReusableGroupId == group.id) {
-                  { Icon(Icons.Filled.Check, contentDescription = null) }
-                } else null,
-                onClick = {
-                  onSelectReusableGroup(group.id)
-                  reusableGroupMenuExpanded = false
-                },
-              )
-            }
           }
         }
       }
@@ -557,83 +587,68 @@ private fun PersonListCard(
         .fillMaxWidth()
         .combinedClickable(
           onClick = onClick,
+          onLongClickLabel = "More person actions",
           onLongClick = { menuExpanded = true },
         ),
-      shape = RoundedCornerShape(16.dp),
-      border = NexusFrostedStyle.borderStroke(MaterialTheme.colorScheme),
-      colors = NexusFrostedStyle.cardColors(),
-      elevation = NexusFrostedStyle.cardElevation(),
+      shape = RoundedCornerShape(12.dp),
+      colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
-    Row(
-      modifier = Modifier
-        .fillMaxWidth()
-        .padding(horizontal = 14.dp, vertical = 12.dp),
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
-      ProfileAvatar(
-        name = profile.name,
-        photoFileName = profile.photoFileName,
-        loadPhotoBytes = loadPhotoBytes,
-        size = 52.dp,
-      )
-      Spacer(modifier = Modifier.width(14.dp))
-      Column(modifier = Modifier.weight(1f)) {
-        Text(
-          text = profile.name,
-          style = MaterialTheme.typography.titleMedium,
-          fontWeight = FontWeight.SemiBold,
-          color = MaterialTheme.colorScheme.onSurface,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        ProfileAvatar(
+          name = profile.name,
+          photoFileName = profile.photoFileName,
+          loadPhotoBytes = loadPhotoBytes,
+          size = 40.dp,
         )
-        val primaryMeta = personCardSubtitle(profile)
-        if (primaryMeta.isNotBlank()) {
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
           Text(
-            text = primaryMeta,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            text = profile.name,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
           )
+          val currentPosting = profile.currentPosting()
+          val primaryMeta = listOf(
+            currentPosting?.designation.orEmpty().ifBlank { profile.designation },
+            currentPosting?.organisation.orEmpty().ifBlank { profile.organisation },
+          ).map(String::trim).filter(String::isNotEmpty).joinToString(" \u00B7 ")
+            .ifBlank { personCardSubtitle(profile) }
+          if (primaryMeta.isNotBlank()) {
+            Text(
+              text = primaryMeta,
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
+          if (!matchReason.isNullOrBlank()) {
+            Text(
+              text = matchReason,
+              style = MaterialTheme.typography.labelSmall,
+              fontWeight = FontWeight.Medium,
+              color = MaterialTheme.colorScheme.primary,
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          }
         }
-        val secondaryMeta = profile.whereWeMet.ifBlank { profile.phone }
-        if (secondaryMeta.isNotBlank()) {
-          Text(
-            text = secondaryMeta,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
-        }
-        if (profile.tags.isNotEmpty()) {
-          Text(
-            text = profile.tags.joinToString(" \u00B7 ") { "#$it" },
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.secondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
-        }
-        if (!matchReason.isNullOrBlank()) {
-          Text(
-            text = matchReason,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        IconButton(onClick = onToggleFavourite) {
+          Icon(
+            imageVector = if (profile.isFavourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
+            contentDescription = if (profile.isFavourite) "Remove from favourites" else "Add to favourites",
+            tint = if (profile.isFavourite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
           )
         }
       }
-      IconButton(onClick = onToggleFavourite) {
-        Icon(
-          imageVector = if (profile.isFavourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
-          contentDescription = if (profile.isFavourite) "Remove from favourites" else "Add to favourites",
-          tint = if (profile.isFavourite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-      }
-    }
     }
     DropdownMenu(
       expanded = menuExpanded,
@@ -677,7 +692,7 @@ private fun PersonListCard(
 @Composable
 private fun EmptyPeopleState(
   hasAnyProfiles: Boolean,
-  onAddClick: () -> Unit,
+  onAddClick: (() -> Unit)?,
   onClearFilters: () -> Unit,
 ) {
   Box(
@@ -688,16 +703,20 @@ private fun EmptyPeopleState(
   ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
       Text(
-        text = if (hasAnyProfiles) "No matching profiles" else "Your directory is empty",
+        text = when {
+          hasAnyProfiles -> "No matching profiles"
+          onAddClick == null -> "No members yet"
+          else -> "Your directory is empty"
+        },
         style = MaterialTheme.typography.titleMedium,
         fontWeight = FontWeight.Medium,
       )
       Spacer(modifier = Modifier.height(8.dp))
       Text(
-        text = if (hasAnyProfiles) {
-          "Try another search term or clear active filters."
-        } else {
-          "Tap Add to save someone you just met during the Foundation Course."
+        text = when {
+          hasAnyProfiles -> "Try another search term or clear active filters."
+          onAddClick == null -> "Use Manage members to add people to this group."
+          else -> "Add someone to start your directory."
         },
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -707,7 +726,7 @@ private fun EmptyPeopleState(
         OutlinedButton(onClick = onClearFilters) {
           Text("Clear filters")
         }
-      } else {
+      } else if (onAddClick != null) {
         Button(onClick = onAddClick) {
           Icon(Icons.Filled.Add, contentDescription = null)
           Spacer(modifier = Modifier.width(8.dp))
