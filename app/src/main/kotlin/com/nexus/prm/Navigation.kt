@@ -42,6 +42,9 @@ import com.nexus.prm.ui.people.PeopleScreen
 import com.nexus.prm.ui.people.PeopleViewModel
 import com.nexus.prm.ui.profile.PersonDetailScreen
 import com.nexus.prm.ui.profile.PersonEditScreen
+import com.nexus.prm.ui.settings.AppearanceScreen
+import com.nexus.prm.ui.settings.BackupSettingsScreen
+import com.nexus.prm.ui.settings.CallerIdSettingsScreen
 import com.nexus.prm.ui.settings.OwnerCardScreen
 import com.nexus.prm.ui.settings.SettingsScreen
 
@@ -171,11 +174,25 @@ fun MainNavigation(
         }
         entry<Settings> {
           SettingsScreen(
+            onBack = { backStack.removeLastOrNull() },
+            onOpenBackups = { backStack.add(BackupSettings) },
+            onOpenAppearance = { backStack.add(AppearanceSettings) },
+            onOpenCallerId = { backStack.add(CallerIdSettings) },
+            onOpenOwnerCard = { backStack.add(OwnerCardRoute) },
+          )
+        }
+        entry<BackupSettings> {
+          BackupSettingsScreen(
             repository = repository,
             autoBackupManager = autoBackupManager,
             onBack = { backStack.removeLastOrNull() },
-            onOpenOwnerCard = { backStack.add(OwnerCardRoute) },
           )
+        }
+        entry<AppearanceSettings> {
+          AppearanceScreen(onBack = { backStack.removeLastOrNull() })
+        }
+        entry<CallerIdSettings> {
+          CallerIdSettingsScreen(onBack = { backStack.removeLastOrNull() })
         }
         entry<ContactImport> {
           ContactImportScreen(

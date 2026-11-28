@@ -14,6 +14,12 @@ import kotlinx.serialization.Serializable
 
 @Serializable data object Settings : NavKey
 
+@Serializable data object BackupSettings : NavKey
+
+@Serializable data object AppearanceSettings : NavKey
+
+@Serializable data object CallerIdSettings : NavKey
+
 @Serializable data object ContactImport : NavKey
 
 @Serializable data object CsvImport : NavKey
